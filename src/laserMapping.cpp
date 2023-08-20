@@ -411,11 +411,14 @@ bool sync_packages(MeasureGroup &meas)
     /*** push imu data, and pop from imu buffer ***/
     double imu_time = imu_buffer.front()->header.stamp.toSec();
     meas.imu.clear();
-    while ((!imu_buffer.empty()) && (imu_time < meas.lidar_beg_time))
+    meas.imu.swap(meas.imu_cur);
+    meas.imu_cur.clear();
+    while ((!imu_buffer.empty()) && (imu_time < meas.lidar_end_time))
     {
         imu_time = imu_buffer.front()->header.stamp.toSec();
-        if(imu_time > meas.lidar_beg_time) break;
-        meas.imu.push_back(imu_buffer.front());
+        if(imu_time > meas.lidar_end_time) break;
+        if(imu_time > meas.lidar_beg_time) meas.imu_cur.push_back(imu_buffer.front());
+        else meas.imu.push_back(imu_buffer.front()); //shm: only effected in the first time
         imu_buffer.pop_front();
     }
 
@@ -578,9 +581,9 @@ void publish_map(const ros::Publisher & pubLaserCloudMap)
 template<typename T>
 void set_posestamp(T & out)
 {
-    out.pose.position.x = state_point.pos(0);
-    out.pose.position.y = state_point.pos(1);
-    out.pose.position.z = state_point.pos(2);
+    out.pose.position.x = state_point.pos_cur(0);
+    out.pose.position.y = state_point.pos_cur(1);
+    out.pose.position.z = state_point.pos_cur(2);
     out.pose.orientation.x = geoQuat.x;
     out.pose.orientation.y = geoQuat.y;
     out.pose.orientation.z = geoQuat.z;
@@ -726,9 +729,10 @@ void h_share_model(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_
     double solve_start_  = omp_get_wtime();
     
     /*** Computation of Measuremnt Jacobian matrix H and measurents vector ***/
-    ekfom_data.h_x = MatrixXd::Zero(effct_feat_num, 21); //23
-    ekfom_data.h.resize(effct_feat_num);
+    ekfom_data.h_x = MatrixXd::Zero(effct_feat_num+9, 30); //23 
+    ekfom_data.h.resize(effct_feat_num+9); 
     // std::cout << "Hello H 0.9" << std::endl; 
+    // double max_dt = 0;
     for (int i = 0; i < effct_feat_num; i++)
     {
         // std::cout << "Hello H 0.2" << std::endl; 
@@ -760,6 +764,7 @@ void h_share_model(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_
         ekfom_data.h_x.block<1, 3>(i,0) = norm_vec.transpose();
         // std::cout << "Hello H 0.4" << std::endl; 
         double dt = laser_p.curvature/double(1000);
+        // if (dt > max_dt) max_dt = dt;
         // std::cout << "Hello H 0.5" << std::endl; 
         SO3 res;
         vect3 seg_SO3;
@@ -787,7 +792,35 @@ void h_share_model(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_
         // std::cout << "Hello H 0.9" << std::endl;        
         /*** Measuremnt: distance to the closest surface/corner ***/
         ekfom_data.h(i) = -norm_p.intensity;
-    }
+    }    
+
+    Eigen::Quaterniond quat_cur;
+    quat_cur=s.rot_cur;
+    Eigen::Quaterniond quat;
+    quat=s.rot;
+    SO3 res;
+    vect3 seg_SO3;    
+    for (int j = 0; j < 3; j++)
+        seg_SO3(j) = s.omg[j]*lidar_mean_scantime; 
+    res.w() = MTK::exp<double, 3>(res.vec(), seg_SO3, double(1/2));
+    Eigen::Quaterniond d_quat;
+    d_quat = res;
+    Eigen::Quaterniond res_quat = (d_quat*quat).conjugate()*quat_cur;
+    ekfom_data.h.block<3, 1>(effct_feat_num,0) = 2*res_quat.vec();
+    ekfom_data.h_x.block<3, 3>(effct_feat_num,24) = -(Qright(quat_cur)*Qleft((d_quat*quat).conjugate())).bottomRightCorner<3, 3>();
+    ekfom_data.h_x.block<3, 3>(effct_feat_num,3) = (Qright(d_quat.conjugate()*quat_cur)*Qleft(quat.conjugate())).bottomRightCorner<3, 3>();
+    ekfom_data.h_x.block<3, 3>(effct_feat_num,15) = lidar_mean_scantime*(Qright(quat_cur)*Qleft((d_quat*quat).conjugate())).bottomRightCorner<3, 3>();
+    
+    ekfom_data.h.block<3, 1>(effct_feat_num+3,0) = s.pos_cur - s.pos - s.vel*lidar_mean_scantime - 0.5*s.acc*lidar_mean_scantime*lidar_mean_scantime;
+    ekfom_data.h_x.block<3, 3>(effct_feat_num+3,21) = -Eigen::Matrix3d::Identity();
+    ekfom_data.h_x.block<3, 3>(effct_feat_num+3,0) = Eigen::Matrix3d::Identity();
+    ekfom_data.h_x.block<3, 3>(effct_feat_num+3,6) = Eigen::Matrix3d::Identity()*lidar_mean_scantime;
+    ekfom_data.h_x.block<3, 3>(effct_feat_num+3,18) = 0.5*Eigen::Matrix3d::Identity()*lidar_mean_scantime*lidar_mean_scantime;
+
+    ekfom_data.h.block<3, 1>(effct_feat_num+6,0) = s.vel_cur - s.vel - s.acc*lidar_mean_scantime;
+    ekfom_data.h_x.block<3, 3>(effct_feat_num+6,27) = -Eigen::Matrix3d::Identity();
+    ekfom_data.h_x.block<3, 3>(effct_feat_num+6,6) = Eigen::Matrix3d::Identity();
+    ekfom_data.h_x.block<3, 3>(effct_feat_num+6,18) = Eigen::Matrix3d::Identity()*lidar_mean_scantime;
     // std::cout << "Hello H 1" << std::endl;
     solve_time += omp_get_wtime() - solve_start_;
 }
@@ -860,8 +893,8 @@ int main(int argc, char** argv)
     p_imu->set_gyr_bias_cov(V3D(b_gyr_cov, b_gyr_cov, b_gyr_cov));
     p_imu->set_acc_bias_cov(V3D(b_acc_cov, b_acc_cov, b_acc_cov));
 
-    double epsi[29] = {0.001};
-    fill(epsi, epsi+29, 0.001);
+    double epsi[38] = {0.001};
+    fill(epsi, epsi+38, 0.001);
     // std::cout << "Hello 0" << std::endl;
     kf.init_dyn_share(get_f, df_dx, df_dw, h_share_model, NUM_MAX_ITERATIONS, epsi);
     
@@ -1003,11 +1036,11 @@ int main(int argc, char** argv)
             // std::cout << "Hello 1" << std::endl;
             euler_cur = SO3ToEuler(state_point.rot);
             // std::cout << "Hello 2" << std::endl;
-            pos_lid = state_point.pos + state_point.rot * state_point.offset_T_L_I;
-            geoQuat.x = state_point.rot.coeffs()[0];
-            geoQuat.y = state_point.rot.coeffs()[1];
-            geoQuat.z = state_point.rot.coeffs()[2];
-            geoQuat.w = state_point.rot.coeffs()[3];
+            pos_lid = state_point.pos_cur + state_point.rot_cur * state_point.offset_T_L_I;
+            geoQuat.x = state_point.rot_cur.coeffs()[0];
+            geoQuat.y = state_point.rot_cur.coeffs()[1];
+            geoQuat.z = state_point.rot_cur.coeffs()[2];
+            geoQuat.w = state_point.rot_cur.coeffs()[3];
 
             double t_update_end = omp_get_wtime();
             // std::cout << "Hello 3" << std::endl;

@@ -108,4 +108,28 @@ Eigen::Matrix<T, 3, 1> RotMtoEuler(const Eigen::Matrix<T, 3, 3> &rot)
     return ang;
 }
 
+template <typename Derived>
+static Eigen::Matrix<typename Derived::Scalar, 4, 4> Qleft(const Eigen::QuaternionBase<Derived> &qq)
+{
+    // Eigen::Quaternion<typename Derived::Scalar> qq = positify(q);
+    Eigen::Matrix<typename Derived::Scalar, 4, 4> ans;
+    ans(0, 0) = qq.w(), ans.template block<1, 3>(0, 1) = -qq.vec().transpose();
+    Eigen::Matrix<typename Derived::Scalar, 3, 3> qq_skew;
+    qq_skew << SKEW_SYM_MATRX(qq.vec());
+    ans.template block<3, 1>(1, 0) = qq.vec(), ans.template block<3, 3>(1, 1) = qq.w() * Eigen::Matrix<typename Derived::Scalar, 3, 3>::Identity() + qq_skew;
+    return ans;
+}
+
+template <typename Derived>
+static Eigen::Matrix<typename Derived::Scalar, 4, 4> Qright(const Eigen::QuaternionBase<Derived> &pp)
+{
+    // Eigen::Quaternion<typename Derived::Scalar> pp = positify(p);
+    Eigen::Matrix<typename Derived::Scalar, 4, 4> ans;
+    ans(0, 0) = pp.w(), ans.template block<1, 3>(0, 1) = -pp.vec().transpose();
+    Eigen::Matrix<typename Derived::Scalar, 3, 3> pp_skew;
+    pp_skew << SKEW_SYM_MATRX(pp.vec());
+    ans.template block<3, 1>(1, 0) = pp.vec(), ans.template block<3, 3>(1, 1) = pp.w() * Eigen::Matrix<typename Derived::Scalar, 3, 3>::Identity() - pp_skew;
+    return ans;
+}
+
 #endif

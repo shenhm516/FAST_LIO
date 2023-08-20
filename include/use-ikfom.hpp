@@ -17,6 +17,9 @@ MTK_BUILD_MANIFOLD(state_ikfom,
 ((vect3, offset_T_L_I))
 ((vect3, omg))
 ((vect3, acc))
+((vect3, pos_cur))
+((SO3, rot_cur))
+((vect3, vel_cur))
 ((vect3, bg))
 ((vect3, ba))
 ((S2, grav))
@@ -25,6 +28,8 @@ MTK_BUILD_MANIFOLD(state_ikfom,
 MTK_BUILD_MANIFOLD(input_ikfom,
 ((vect3, acc))
 ((vect3, gyro))
+((vect3, acc_cur))
+((vect3, gyro_cur))
 );
 
 MTK_BUILD_MANIFOLD(process_noise_ikfom,
@@ -46,53 +51,79 @@ MTK::get_cov<process_noise_ikfom>::type process_noise_cov()
 
 //double L_offset_to_I[3] = {0.04165, 0.02326, -0.0284}; // Avia 
 //vect3 Lidar_offset_to_IMU(L_offset_to_I, 3);
-Eigen::Matrix<double, 30, 1> get_f(state_ikfom &s, const input_ikfom &in)
+Eigen::Matrix<double, 39, 1> get_f(state_ikfom &s, const input_ikfom &in)
 {
 	// std::cout << "Hello f 0" << std::endl;
-	Eigen::Matrix<double, 30, 1> res = Eigen::Matrix<double, 30, 1>::Zero();
+	Eigen::Matrix<double, 39, 1> res = Eigen::Matrix<double, 39, 1>::Zero();
 	vect3 omega;
 	in.gyro.boxminus(omega, s.bg);
+	vect3 omega_cur;
+	in.gyro_cur.boxminus(omega_cur, s.bg);
 	vect3 a_inertial = s.rot * (in.acc-s.ba); 
-	for(int i = 0; i < 3; i++ ){
-		res(i) = s.vel[i];
-		res(i + 3) =  omega[i]; 
-		res(i + 6) = a_inertial[i] + s.grav[i]; 
+	vect3 a_inertial_cur = s.rot_cur * (in.acc_cur-s.ba); 
+	for(int i = 0; i < 3; i++ ) {
+		if (in.acc != Zero3d || in.gyro != Zero3d) {
+			res(i) = s.vel[i];
+			res(i + 3) = omega[i]; 
+			res(i + 6) = a_inertial[i] + s.grav[i];
+		}
+		if (in.acc_cur != Zero3d || in.gyro_cur != Zero3d) {
+			res(i + 21) = s.vel_cur[i];
+			res(i + 24) = omega_cur[i]; 
+			res(i + 27) = a_inertial_cur[i] + s.grav[i];
+		} 
 	}
 	// std::cout << "Hello f 1" << std::endl;
 	return res;
 }
 
-Eigen::Matrix<double, 30, 29> df_dx(state_ikfom &s, const input_ikfom &in)
+Eigen::Matrix<double, 39, 38> df_dx(state_ikfom &s, const input_ikfom &in)
 {
 	// std::cout << "Hello F 0" << std::endl;
-	Eigen::Matrix<double, 30, 29> cov = Eigen::Matrix<double, 30, 29>::Zero();
-	cov.template block<3, 3>(0, 6) = Eigen::Matrix3d::Identity();
-	vect3 acc_;
-	in.acc.boxminus(acc_, s.ba);
-	vect3 omega;
-	in.gyro.boxminus(omega, s.bg);
-	cov.template block<3, 3>(6, 3) = -s.rot.toRotationMatrix()*MTK::hat(acc_);
-	cov.template block<3, 3>(6, 24) = -s.rot.toRotationMatrix();
-	Eigen::Matrix<state_ikfom::scalar, 2, 1> vec = Eigen::Matrix<state_ikfom::scalar, 2, 1>::Zero();
-	Eigen::Matrix<state_ikfom::scalar, 3, 2> grav_matrix;
-	s.S2_Mx(grav_matrix, vec, 27);
-	cov.template block<3, 2>(6, 27) =  grav_matrix; 
-	cov.template block<3, 3>(3, 21) = -Eigen::Matrix3d::Identity(); 
+	Eigen::Matrix<double, 39, 38> cov = Eigen::Matrix<double, 39, 38>::Zero();
+	// vect3 omega;
+	// in.gyro.boxminus(omega, s.bg);
+	if (in.acc != Zero3d || in.gyro != Zero3d) {
+		cov.template block<3, 3>(0, 6) = Eigen::Matrix3d::Identity();
+		vect3 acc_;
+		in.acc.boxminus(acc_, s.ba);
+		cov.template block<3, 3>(6, 3) = -s.rot.toRotationMatrix()*MTK::hat(acc_);
+		cov.template block<3, 3>(6, 33) = -s.rot.toRotationMatrix();
+		Eigen::Matrix<state_ikfom::scalar, 2, 1> vec = Eigen::Matrix<state_ikfom::scalar, 2, 1>::Zero();
+		Eigen::Matrix<state_ikfom::scalar, 3, 2> grav_matrix;
+		s.S2_Mx(grav_matrix, vec, 36);
+		cov.template block<3, 2>(6, 36) =  grav_matrix; 
+		cov.template block<3, 3>(3, 30) = -Eigen::Matrix3d::Identity(); 
+	}
+	if (in.acc_cur != Zero3d || in.gyro_cur != Zero3d) {
+		cov.template block<3, 3>(21, 27) = Eigen::Matrix3d::Identity(); 
+		cov.template block<3, 3>(24, 30) = -Eigen::Matrix3d::Identity(); 
+		vect3 acc_cur;
+		in.acc_cur.boxminus(acc_cur, s.ba);
+		cov.template block<3, 3>(27, 24) = -s.rot_cur.toRotationMatrix()*MTK::hat(acc_cur);
+		cov.template block<3, 3>(27, 33) = -s.rot_cur.toRotationMatrix();
+	}
 	// std::cout << "Hello F 0" << std::endl;
 	return cov;
 }
 
 
-Eigen::Matrix<double, 30, 12> df_dw(state_ikfom &s, const input_ikfom &in)
+Eigen::Matrix<double, 39, 12> df_dw(state_ikfom &s, const input_ikfom &in)
 {
 	// std::cout << "Hello Fw 0" << std::endl;
-	Eigen::Matrix<double, 30, 12> cov = Eigen::Matrix<double, 30, 12>::Zero();
-	cov.template block<3, 3>(6, 3) = -s.rot.toRotationMatrix();
-	cov.template block<3, 3>(3, 0) = -Eigen::Matrix3d::Identity();
-	cov.template block<3, 3>(15, 0) = Eigen::Matrix3d::Identity();
-	cov.template block<3, 3>(18, 3) = Eigen::Matrix3d::Identity();
-	cov.template block<3, 3>(21, 6) = Eigen::Matrix3d::Identity();
-	cov.template block<3, 3>(24, 9) = Eigen::Matrix3d::Identity();
+	Eigen::Matrix<double, 39, 12> cov = Eigen::Matrix<double, 39, 12>::Zero();
+	if (in.acc != Zero3d || in.gyro != Zero3d) {
+		cov.template block<3, 3>(6, 3) = -s.rot.toRotationMatrix();
+		cov.template block<3, 3>(3, 0) = -Eigen::Matrix3d::Identity();
+		cov.template block<3, 3>(15, 0) = Eigen::Matrix3d::Identity();
+		cov.template block<3, 3>(18, 3) = Eigen::Matrix3d::Identity();
+		cov.template block<3, 3>(30, 6) = Eigen::Matrix3d::Identity();
+		cov.template block<3, 3>(33, 9) = Eigen::Matrix3d::Identity();
+	}
+	if (in.acc_cur != Zero3d || in.gyro_cur != Zero3d) {
+		cov.template block<3, 3>(27, 3) = -s.rot_cur.toRotationMatrix();
+		cov.template block<3, 3>(24, 0) = -Eigen::Matrix3d::Identity();
+	}
 	// std::cout << "Hello Fw 1" << std::endl;
 	return cov;
 }
