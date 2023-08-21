@@ -133,11 +133,18 @@ vect3 pos_lid;
 
 nav_msgs::Path path;
 nav_msgs::Odometry odomAftMapped;
+nav_msgs::Odometry odomImu;
 geometry_msgs::Quaternion geoQuat;
 geometry_msgs::PoseStamped msg_body_pose;
 
 shared_ptr<Preprocess> p_pre(new Preprocess());
 shared_ptr<ImuProcess> p_imu(new ImuProcess());
+
+/*** Fast prediction ***/
+double latest_time;
+V3D latest_P, latest_V, latest_Ba, latest_Bg, latest_acc_0, latest_gyr_0;
+Eigen::Quaterniond latest_Q;
+ros::Publisher pubOdomImu;
 
 void SigHandle(int sig)
 {
@@ -282,6 +289,46 @@ void lasermap_fov_segment()
     kdtree_delete_time = omp_get_wtime() - delete_begin;
 }
 
+void fastPredictIMU(double t, V3D linear_acceleration, V3D angular_velocity)
+{
+    double dt = t - latest_time;
+    // std::cout << dt << std::endl;
+    latest_time = t;
+    V3D un_gyr = 0.5 * (latest_gyr_0 + angular_velocity - latest_Bg);
+    SO3 res;
+    vect3 seg_SO3;
+    for (int i = 0; i < 3; i++) seg_SO3(i) = un_gyr[i]*dt;
+    res.w() = MTK::exp<double, 3>(res.vec(), seg_SO3, double(1/2));
+    latest_Q = res * latest_Q;
+    V3D un_acc_1 = latest_Q * (linear_acceleration - latest_Ba);
+    for (int i = 0; i < 3; i++) un_acc_1[i] += state_point.grav[i]; //has some problem
+    V3D un_acc = 0.5 * (latest_acc_0 + un_acc_1);
+    latest_P = latest_P + dt * latest_V + 0.5 * dt * dt * un_acc;
+    latest_V = latest_V + dt * un_acc;
+    latest_acc_0 = un_acc_1;
+    latest_gyr_0 = angular_velocity - latest_Bg;
+}
+
+void publish_odometry_imu(double time_stamp, const ros::Publisher & pubOdomImu)
+{
+    nav_msgs::Odometry odometry;
+    odometry.header.frame_id = "camera_init";
+    odometry.child_frame_id = "body";
+    odometry.header.stamp = ros::Time().fromSec(time_stamp);
+    
+    odometry.pose.pose.position.x = latest_P.x();
+    odometry.pose.pose.position.y = latest_P.y();
+    odometry.pose.pose.position.z = latest_P.z();
+    odometry.pose.pose.orientation.x = latest_Q.x();
+    odometry.pose.pose.orientation.y = latest_Q.y();
+    odometry.pose.pose.orientation.z = latest_Q.z();
+    odometry.pose.pose.orientation.w = latest_Q.w();
+    odometry.twist.twist.linear.x = latest_V.x();
+    odometry.twist.twist.linear.y = latest_V.y();
+    odometry.twist.twist.linear.z = latest_V.z();
+    pubOdomImu.publish(odometry);
+}
+
 void standard_pcl_cbk(const sensor_msgs::PointCloud2::ConstPtr &msg) 
 {
     mtx_buffer.lock();
@@ -365,6 +412,10 @@ void imu_cbk(const sensor_msgs::Imu::ConstPtr &msg_in)
     last_timestamp_imu = timestamp;
 
     imu_buffer.push_back(msg);
+    V3D linearAcceleration(msg->linear_acceleration.x, msg->linear_acceleration.y, msg->linear_acceleration.z);
+    V3D angularVelocity(msg->angular_velocity.x, msg->angular_velocity.y, msg->angular_velocity.z);
+    fastPredictIMU(timestamp, linearAcceleration, angularVelocity);
+    publish_odometry_imu(timestamp, pubOdomImu);
     mtx_buffer.unlock();
     sig_buffer.notify_all();
 }
@@ -730,7 +781,7 @@ void h_share_model(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_
     
     /*** Computation of Measuremnt Jacobian matrix H and measurents vector ***/
     ekfom_data.h_x = MatrixXd::Zero(effct_feat_num+9, 30); //23 
-    ekfom_data.h.resize(effct_feat_num+9); 
+    ekfom_data.h.resize(effct_feat_num+9);  //shm: this is the Z-h(x) vector, not h(x)
     // std::cout << "Hello H 0.9" << std::endl; 
     // double max_dt = 0;
     for (int i = 0; i < effct_feat_num; i++)
@@ -917,18 +968,13 @@ int main(int argc, char** argv)
         nh.subscribe(lid_topic, 200000, livox_pcl_cbk) : \
         nh.subscribe(lid_topic, 200000, standard_pcl_cbk);
     ros::Subscriber sub_imu = nh.subscribe(imu_topic, 200000, imu_cbk);
-    ros::Publisher pubLaserCloudFull = nh.advertise<sensor_msgs::PointCloud2>
-            ("/cloud_registered", 100000);
-    ros::Publisher pubLaserCloudFull_body = nh.advertise<sensor_msgs::PointCloud2>
-            ("/cloud_registered_body", 100000);
-    ros::Publisher pubLaserCloudEffect = nh.advertise<sensor_msgs::PointCloud2>
-            ("/cloud_effected", 100000);
-    ros::Publisher pubLaserCloudMap = nh.advertise<sensor_msgs::PointCloud2>
-            ("/Laser_map", 100000);
-    ros::Publisher pubOdomAftMapped = nh.advertise<nav_msgs::Odometry> 
-            ("/Odometry", 100000);
-    ros::Publisher pubPath          = nh.advertise<nav_msgs::Path> 
-            ("/path", 100000);
+    ros::Publisher pubLaserCloudFull = nh.advertise<sensor_msgs::PointCloud2> ("/cloud_registered", 100000);
+    ros::Publisher pubLaserCloudFull_body = nh.advertise<sensor_msgs::PointCloud2> ("/cloud_registered_body", 100000);
+    ros::Publisher pubLaserCloudEffect = nh.advertise<sensor_msgs::PointCloud2> ("/cloud_effected", 100000);
+    ros::Publisher pubLaserCloudMap = nh.advertise<sensor_msgs::PointCloud2> ("/Laser_map", 100000);
+    ros::Publisher pubOdomAftMapped = nh.advertise<nav_msgs::Odometry> ("/Odometry", 1);
+    pubOdomImu = nh.advertise<nav_msgs::Odometry> ("/Odometry/imu", 1);
+    ros::Publisher pubPath = nh.advertise<nav_msgs::Path> ("/path", 100000);
 //------------------------------------------------------------------------------------------------------
     signal(SIGINT, SigHandle);
     ros::Rate rate(5000);
@@ -1046,7 +1092,26 @@ int main(int argc, char** argv)
             // std::cout << "Hello 3" << std::endl;
             /******* Publish odometry *******/
             publish_odometry(pubOdomAftMapped);
-            // std::cout << "Hello 4" << std::endl;
+
+            mtx_buffer.lock();
+            latest_time = lidar_end_time;
+            latest_P = state_point.pos_cur;
+            latest_Q = state_point.rot_cur;
+            latest_V = state_point.vel_cur;
+            latest_Ba = state_point.ba;
+            latest_Bg = state_point.bg;
+            latest_acc_0 = state_point.acc;
+            latest_gyr_0 = state_point.omg;                
+            auto tmp_imu_buf = imu_buffer;
+            while(!tmp_imu_buf.empty())
+            {
+                double t = tmp_imu_buf.front()->header.stamp.toSec();
+                V3D linearAcceleration(tmp_imu_buf.front()->linear_acceleration.x, tmp_imu_buf.front()->linear_acceleration.y, tmp_imu_buf.front()->linear_acceleration.z);
+                V3D angularVelocity(tmp_imu_buf.front()->angular_velocity.x, tmp_imu_buf.front()->angular_velocity.y, tmp_imu_buf.front()->angular_velocity.z);
+                fastPredictIMU(t, linearAcceleration, angularVelocity);
+                tmp_imu_buf.pop_front();
+            }
+            mtx_buffer.unlock();
             /*** add the feature points to map kdtree ***/
             t3 = omp_get_wtime();
             map_incremental();
