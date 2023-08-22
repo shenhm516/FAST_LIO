@@ -230,7 +230,7 @@ Visualization Manager:
             Shaft Length: 0.10000000149011612
             Shaft Radius: 0.10000000149011612
             Value: Axes
-          Topic: /Odometry/imu
+          Topic: /Odometry/Imu
           Unreliable: true
           Value: true
       Enabled: true
@@ -398,5 +398,5 @@ Window Geometry:
   Views:
     collapsed: true
   Width: 1908
-  X: 0
-  Y: 1080
+  X: -32
+  Y: -32

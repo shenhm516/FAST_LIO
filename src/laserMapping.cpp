@@ -59,11 +59,13 @@
 #include <livox_ros_driver/CustomMsg.h>
 #include "preprocess.h"
 #include <ikd-Tree/ikd_Tree.h>
+#include <unordered_map>
 
 #define INIT_TIME           (0.1)
 #define LASER_POINT_COV     (0.001)
 #define MAXN                (720000)
 #define PUBFRAME_PERIOD     (20)
+#define USE_voxel
 
 /*** Time Log Variables ***/
 double kdtree_incremental_time = 0.0, kdtree_search_time = 0.0, kdtree_delete_time = 0.0;
@@ -82,7 +84,7 @@ mutex mtx_buffer;
 condition_variable sig_buffer;
 
 string root_dir = ROOT_DIR;
-string map_file_path, lid_topic, imu_topic;
+string map_file_path, lid_topic, imu_topic, imu_odom_topic;
 
 double res_mean_last = 0.05, total_residual = 0.0;
 double last_timestamp_lidar = 0, last_timestamp_imu = -1.0;
@@ -145,6 +147,11 @@ double latest_time;
 V3D latest_P, latest_V, latest_Ba, latest_Bg, latest_acc_0, latest_gyr_0;
 Eigen::Quaterniond latest_Q;
 ros::Publisher pubOdomImu;
+
+/*** Voxel map ***/
+double rootSurfVoxelSize;
+vector<unordered_map<VOXEL_LOC, OCTO_TREE*>::iterator> surfhashKeyMargVector;  
+unordered_map<VOXEL_LOC, OCTO_TREE*> surf_map;
 
 void SigHandle(int sig)
 {
@@ -529,6 +536,78 @@ void map_incremental()
     kdtree_incremental_time = omp_get_wtime() - st_time;
 }
 
+void cut_voxel(std::unordered_map<VOXEL_LOC, OCTO_TREE*> &feat_map, pcl::PointCloud<PointType>::Ptr pl_feat, state_ikfom state)
+{
+    std::vector<unordered_map<VOXEL_LOC, OCTO_TREE*>::iterator> feat_map_update_iter;
+
+    // ros::WallTime starting_time = ros::WallTime::now();
+    
+    for(uint i=0; i<pl_feat->size(); i++) //遍历所有特征点
+    {
+        // Transform point to world coordinate
+        pointBodyToWorld(&(pl_feat->points[i]), &(feats_down_world->points[i]));
+        V3D pvec_tran(feats_down_world->points[i].x, feats_down_world->points[i].y, feats_down_world->points[i].z);
+        // Determine the key of hash table
+        float loc_xyz[3];
+        for(int j=0; j<3; j++)
+        {
+            loc_xyz[j] = pvec_tran[j] / rootSurfVoxelSize;
+            if(loc_xyz[j] < 0) loc_xyz[j] -= 1.0;        
+        }
+        VOXEL_LOC position((int64_t)loc_xyz[0], (int64_t)loc_xyz[1], (int64_t)loc_xyz[2]);
+
+        // Find corresponding voxel
+        auto iter = feat_map.find(position);//找到与当前特征对应的体素
+        if(iter != feat_map.end())
+        {
+            // iter->second->tmp_ori[frame_id].push_back(pvec_orig); // shm: add the original point into the silding window
+            iter->second->Time = ros::Time::now().toSec();
+            if (iter->second->octo_state==false && iter->second->plvec_tran->size()< 50)
+            {
+                // iter->second->Time = ros::Time::now().toSec();
+                iter->second->plvec_tran->push_back(pvec_tran);                    
+                if (iter->second->is2opt == false) {
+                    feat_map_update_iter.push_back(iter);
+                    iter->second->is2opt = true; //体素更新标志位
+                }                    
+            }
+        }
+        else // If not finding, build a new voxel
+        {
+            OCTO_TREE *ot = new OCTO_TREE();    //建立一个新体素
+            // ot->tmp_ori[frame_id].push_back(pvec_orig);  // shm: add the original point into the silding window
+            ot->plvec_tran->push_back(pvec_tran);       //点云坐标(world fixed frame)
+            // Voxel center coordinate
+            ot->voxel_center[0] = (0.5+position.x) * rootSurfVoxelSize;
+            ot->voxel_center[1] = (0.5+position.y) * rootSurfVoxelSize;
+            ot->voxel_center[2] = (0.5+position.z) * rootSurfVoxelSize;
+            ot->quater_length = rootSurfVoxelSize / 4.0; // A quater of side length
+            // ot->correspondTime = ros::Time::now().toSec();
+            // ot->is2opt = true;
+            feat_map[position] = ot;
+            feat_map_update_iter.push_back(feat_map.find(position));
+            surfhashKeyMargVector.push_back(feat_map.find(position));
+        }
+    }
+    /****************根据新加入特征更新体素******************/
+    for (uint i=0; i<feat_map_update_iter.size(); i++) {
+        feat_map_update_iter[i]->second->root_centors.clear();
+        feat_map_update_iter[i]->second->recut(0, feat_map_update_iter[i]->second->root_centors, feat_map_update_iter[i]->second->pl_eigen);
+        feat_map_update_iter[i]->second->is2opt = false;
+    }
+    /*****************边缘化建立10s以上的体素（减少内存占用）******************/
+    uint slowIndex = 0;
+    for (uint i=0; i<surfhashKeyMargVector.size(); i++) {
+        if (ros::Time::now().toSec()-surfhashKeyMargVector[i]->second->Time > 10){
+            surfhashKeyMargVector[i]->second->octo_state = true;
+            vector<Eigen::Vector3d>().swap(*surfhashKeyMargVector[i]->second->plvec_tran);
+        } else {
+            surfhashKeyMargVector[slowIndex++] = surfhashKeyMargVector[i];
+        }
+    }
+    surfhashKeyMargVector.erase(surfhashKeyMargVector.begin()+slowIndex, surfhashKeyMargVector.end());
+}
+
 PointCloudXYZI::Ptr pcl_wait_pub(new PointCloudXYZI(500000, 1));
 PointCloudXYZI::Ptr pcl_wait_save(new PointCloudXYZI());
 void publish_frame_world(const ros::Publisher & pubLaserCloudFull)
@@ -699,30 +778,73 @@ void h_share_model(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_
     total_residual = 0.0; 
     // std::cout << "Hello H 0" << std::endl;
     /** closest surface search and residual computation **/
-    #ifdef MP_EN
-        omp_set_num_threads(MP_PROC_NUM);
-        #pragma omp parallel for
-    #endif
+#ifdef MP_EN
+    omp_set_num_threads(MP_PROC_NUM);
+    #pragma omp parallel for
+#endif
     for (int i = 0; i < feats_down_size; i++)
     {
-        PointType &point_body  = feats_down_body->points[i]; 
-        PointType &point_world = feats_down_world->points[i]; 
-
+        PointType &point_body  = feats_down_body->points[i];
         /* transform to world frame */
         V3D p_body(point_body.x, point_body.y, point_body.z);
         SO3 res;
         vect3 seg_SO3;
         double dt = point_body.curvature/double(1000);
         // std::cout << dt << std::endl;
-        for (int j = 0; j < 3; j++)
-            seg_SO3(j) = s.omg[j]*dt;
+        for (int j = 0; j < 3; j++) seg_SO3(j) = s.omg[j]*dt;
         res.w() = MTK::exp<double, 3>(res.vec(), seg_SO3, double(1/2));
         V3D p_global(res.toRotationMatrix()*s.rot.toRotationMatrix() * (s.offset_R_L_I*p_body + s.offset_T_L_I) + s.pos + s.vel*dt + 0.5*s.acc*dt*dt);
+        
+#ifdef USE_voxel
+        float loc_xyz[3];            
+        loc_xyz[0] = p_global(0) / rootSurfVoxelSize;
+        loc_xyz[1] = p_global(1) / rootSurfVoxelSize;
+        loc_xyz[2] = p_global(2) / rootSurfVoxelSize;
+        for(int j=0; j<3; j++) {
+            if(loc_xyz[j] < 0) loc_xyz[j] -= 1.0;
+        }
+        VOXEL_LOC position((int64_t)loc_xyz[0], (int64_t)loc_xyz[1], (int64_t)loc_xyz[2]);
+        auto iter = surf_map.find(position);//找到与当前特征对应的体素
+        point_selected_surf[i] = false;
+        if(iter != surf_map.end()) {
+            if(iter->second->root_centors.size()) {
+                float dist_record = 1e6;
+                int index = -1;
+                for (int j=0; j< iter->second->root_centors.size(); j++) {
+                    auto dist_x = iter->second->root_centors[j].x-p_global(0);
+                    auto dist_y = iter->second->root_centors[j].y-p_global(1);
+                    auto dist_z = iter->second->root_centors[j].z-p_global(2);
+                    auto dist = sqrt(dist_x*dist_x + dist_y*dist_y + dist_z*dist_z);
+
+                    if (dist<dist_record) {
+                        index = j;
+                        dist_record = dist;
+                    }
+                }
+                if (index>=0) {
+                    PointType &ay = iter->second->root_centors[index];
+                    V3D center(ay.x, ay.y, ay.z);
+                    V3D direct(ay.normal_x, ay.normal_y, ay.normal_z);
+                    direct.normalize();
+                    double dista = fabs(direct.dot(p_global - center));
+                    if(dista <= 0.2) {
+                        point_selected_surf[i] = true;
+                        normvec->points[i].x = direct(0);
+                        normvec->points[i].y = direct(1);
+                        normvec->points[i].z = direct(2);
+                        normvec->points[i].intensity = direct.dot(p_global - center);
+                        res_last[i] = dista;
+                    }
+                }
+            } 
+        }
+#else        
+        PointType &point_world = feats_down_world->points[i]; 
         point_world.x = p_global(0);
         point_world.y = p_global(1);
         point_world.z = p_global(2);
         point_world.intensity = point_body.intensity;
-
+        
         vector<float> pointSearchSqDis(NUM_MATCH_POINTS);
 
         auto &points_near = Nearest_Points[i];
@@ -737,7 +859,7 @@ void h_share_model(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_
         if (!point_selected_surf[i]) continue;
 
         VF(4) pabcd;
-        point_selected_surf[i] = false;
+        point_selected_surf[i] = false;        
         if (esti_plane(pabcd, points_near, 0.1f))
         {
             float pd2 = pabcd(0) * point_world.x + pabcd(1) * point_world.y + pabcd(2) * point_world.z + pabcd(3);
@@ -753,6 +875,7 @@ void h_share_model(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_
                 res_last[i] = abs(pd2);
             }
         }
+#endif
     }
     
     effct_feat_num = 0;
@@ -784,6 +907,10 @@ void h_share_model(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_
     ekfom_data.h.resize(effct_feat_num+9);  //shm: this is the Z-h(x) vector, not h(x)
     // std::cout << "Hello H 0.9" << std::endl; 
     // double max_dt = 0;
+#ifdef MP_EN
+    omp_set_num_threads(MP_PROC_NUM);
+    #pragma omp parallel for
+#endif
     for (int i = 0; i < effct_feat_num; i++)
     {
         // std::cout << "Hello H 0.2" << std::endl; 
@@ -800,18 +927,6 @@ void h_share_model(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_
         V3D norm_vec(norm_p.x, norm_p.y, norm_p.z);
 
         /*** calculate the Measuremnt Jacobian matrix H ***/
-        // V3D C(s.rot.conjugate() *norm_vec);
-        // V3D A(point_crossmat * C);
-        // if (extrinsic_est_en)
-        // {
-        //     V3D B(point_be_crossmat * s.offset_R_L_I.conjugate() * C); //s.rot.conjugate()*norm_vec);
-        //     ekfom_data.h_x.block<1, 12>(i,0) << norm_p.x, norm_p.y, norm_p.z, VEC_FROM_ARRAY(A), VEC_FROM_ARRAY(B), VEC_FROM_ARRAY(C);
-        // }
-        // else
-        // {
-        //     ekfom_data.h_x.block<1, 12>(i,0) << norm_p.x, norm_p.y, norm_p.z, VEC_FROM_ARRAY(A), 0.0, 0.0, 0.0, 0.0, 0.0, 0.0;
-        // }
-        // std::cout << "Hello H 0.3" << std::endl; 
         ekfom_data.h_x.block<1, 3>(i,0) = norm_vec.transpose();
         // std::cout << "Hello H 0.4" << std::endl; 
         double dt = laser_p.curvature/double(1000);
@@ -819,8 +934,7 @@ void h_share_model(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_
         // std::cout << "Hello H 0.5" << std::endl; 
         SO3 res;
         vect3 seg_SO3;
-        for (int j = 0; j < 3; j++)
-            seg_SO3(j) = s.omg[j]*dt;
+        for (int j = 0; j < 3; j++) seg_SO3(j) = s.omg[j]*dt;
         res.w() = MTK::exp<double, 3>(res.vec(), seg_SO3, double(1/2));
         // std::cout << "Hello H 0.6" << std::endl; 
         ekfom_data.h_x.block<1, 3>(i,3) = -norm_vec.transpose()*res.toRotationMatrix()*s.rot.toRotationMatrix()*point_crossmat;
@@ -851,8 +965,7 @@ void h_share_model(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_
     quat=s.rot;
     SO3 res;
     vect3 seg_SO3;    
-    for (int j = 0; j < 3; j++)
-        seg_SO3(j) = s.omg[j]*lidar_mean_scantime; 
+    for (int j = 0; j < 3; j++) seg_SO3(j) = s.omg[j]*lidar_mean_scantime; 
     res.w() = MTK::exp<double, 3>(res.vec(), seg_SO3, double(1/2));
     Eigen::Quaterniond d_quat;
     d_quat = res;
@@ -889,12 +1002,14 @@ int main(int argc, char** argv)
     nh.param<string>("map_file_path",map_file_path,"");
     nh.param<string>("common/lid_topic",lid_topic,"/livox/lidar");
     nh.param<string>("common/imu_topic", imu_topic,"/livox/imu");
+    nh.param<string>("common/imu_odom_topic",imu_odom_topic,"/Odometry/imu");
     nh.param<bool>("common/time_sync_en", time_sync_en, false);
     nh.param<double>("common/time_offset_lidar_to_imu", time_diff_lidar_to_imu, 0.0);
     nh.param<double>("filter_size_corner",filter_size_corner_min,0.5);
     nh.param<double>("filter_size_surf",filter_size_surf_min,0.5);
     nh.param<double>("filter_size_map",filter_size_map_min,0.5);
     nh.param<double>("cube_side_length",cube_len,200);
+    nh.param<double>("mapping/root_surf_voxel_size",rootSurfVoxelSize,1.0);
     nh.param<float>("mapping/det_range",DET_RANGE,300.f);
     nh.param<double>("mapping/fov_degree",fov_deg,180);
     nh.param<double>("mapping/gyr_cov",gyr_cov,0.1);
@@ -929,7 +1044,7 @@ int main(int argc, char** argv)
 
     _featsArray.reset(new PointCloudXYZI());
 
-    memset(point_selected_surf, true, sizeof(point_selected_surf));
+    // memset(point_selected_surf, true, sizeof(point_selected_surf));
     memset(res_last, -1000.0f, sizeof(res_last));
     downSizeFilterSurf.setLeafSize(filter_size_surf_min, filter_size_surf_min, filter_size_surf_min);
     downSizeFilterMap.setLeafSize(filter_size_map_min, filter_size_map_min, filter_size_map_min);
@@ -973,7 +1088,7 @@ int main(int argc, char** argv)
     ros::Publisher pubLaserCloudEffect = nh.advertise<sensor_msgs::PointCloud2> ("/cloud_effected", 100000);
     ros::Publisher pubLaserCloudMap = nh.advertise<sensor_msgs::PointCloud2> ("/Laser_map", 100000);
     ros::Publisher pubOdomAftMapped = nh.advertise<nav_msgs::Odometry> ("/Odometry", 1);
-    pubOdomImu = nh.advertise<nav_msgs::Odometry> ("/Odometry/imu", 1);
+    pubOdomImu = nh.advertise<nav_msgs::Odometry> (imu_odom_topic, 1);
     ros::Publisher pubPath = nh.advertise<nav_msgs::Path> ("/path", 100000);
 //------------------------------------------------------------------------------------------------------
     signal(SIGINT, SigHandle);
@@ -1022,24 +1137,29 @@ int main(int argc, char** argv)
             downSizeFilterSurf.filter(*feats_down_body);
             t1 = omp_get_wtime();
             feats_down_size = feats_down_body->points.size();
+#ifdef USE_voxel
+            if(!surf_map.size()) {
+                if(feats_down_size > 5) {
+                    feats_down_world->resize(feats_down_size);
+                    cut_voxel(surf_map, feats_down_body, state_point);
+                }
+                continue;
+            }
+#else 
             /*** initialize the map kdtree ***/
-            if(ikdtree.Root_Node == nullptr)
-            {
-                if(feats_down_size > 5)
-                {
+            if(ikdtree.Root_Node == nullptr) {
+                if(feats_down_size > 5) {
                     ikdtree.set_downsample_param(filter_size_map_min);
                     feats_down_world->resize(feats_down_size);
                     for(int i = 0; i < feats_down_size; i++)
-                    {
                         pointBodyToWorld(&(feats_down_body->points[i]), &(feats_down_world->points[i]));
-                    }
                     ikdtree.Build(feats_down_world->points);
                 }
                 continue;
             }
-            int featsFromMapNum = ikdtree.validnum();
+            // int featsFromMapNum = ikdtree.validnum();
             kdtree_size_st = ikdtree.size();
-            
+#endif            
             // cout<<"[ mapping ]: In num: "<<feats_undistort->points.size()<<" downsamp "<<feats_down_size<<" Map num: "<<featsFromMapNum<<"effect num:"<<effct_feat_num<<endl;
 
             /*** ICP and iterated Kalman filter update ***/
@@ -1114,7 +1234,11 @@ int main(int argc, char** argv)
             mtx_buffer.unlock();
             /*** add the feature points to map kdtree ***/
             t3 = omp_get_wtime();
+#ifdef USE_voxel
+            cut_voxel(surf_map, feats_down_body, state_point);
+#else
             map_incremental();
+#endif
             // std::cout << "Hello 5" << std::endl;
             t5 = omp_get_wtime();
 
