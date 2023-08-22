@@ -21,6 +21,7 @@ mapping:
     fov_degree:    180
     det_range:     100.0
     root_surf_voxel_size: 1.0
+    use_kernal: true              # true: enable kernal function in observation function h(x)
     extrinsic_est_en:  false      # true: enable the online estimation of IMU-LiDAR extrinsic,
     extrinsic_T: [ 0, 0, 0.28]
     extrinsic_R: [ 1, 0, 0, 

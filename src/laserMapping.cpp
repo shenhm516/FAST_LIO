@@ -94,6 +94,7 @@ double cube_len = 0, HALF_FOV_COS = 0, FOV_DEG = 0, total_distance = 0, lidar_en
 int    effct_feat_num = 0, time_log_counter = 0, scan_count = 0, publish_count = 0;
 int    iterCount = 0, feats_down_size = 0, NUM_MAX_ITERATIONS = 0, laserCloudValidNum = 0, pcd_save_interval = -1, pcd_index = 0;
 bool   point_selected_surf[100000] = {0};
+bool   use_kernal = false;
 bool   lidar_pushed, flg_first_scan = true, flg_exit = false, flg_EKF_inited;
 bool   scan_pub_en = false, dense_pub_en = false, scan_body_pub_en = false;
 
@@ -927,7 +928,10 @@ void h_share_model(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_
         V3D norm_vec(norm_p.x, norm_p.y, norm_p.z);
 
         /*** calculate the Measuremnt Jacobian matrix H ***/
-        ekfom_data.h_x.block<1, 3>(i,0) = norm_vec.transpose();
+        double weight;
+        if(use_kernal) weight = exp(-res_last[i]*res_last[i]/(2*0.01)); 
+        else weight = 1.0;       
+        ekfom_data.h_x.block<1, 3>(i,0) = weight*norm_vec.transpose();
         // std::cout << "Hello H 0.4" << std::endl; 
         double dt = laser_p.curvature/double(1000);
         // if (dt > max_dt) max_dt = dt;
@@ -937,26 +941,26 @@ void h_share_model(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_
         for (int j = 0; j < 3; j++) seg_SO3(j) = s.omg[j]*dt;
         res.w() = MTK::exp<double, 3>(res.vec(), seg_SO3, double(1/2));
         // std::cout << "Hello H 0.6" << std::endl; 
-        ekfom_data.h_x.block<1, 3>(i,3) = -norm_vec.transpose()*res.toRotationMatrix()*s.rot.toRotationMatrix()*point_crossmat;
+        ekfom_data.h_x.block<1, 3>(i,3) = -weight*norm_vec.transpose()*res.toRotationMatrix()*s.rot.toRotationMatrix()*point_crossmat;
         // std::cout << "Hello H 0.61" << std::endl; 
-        ekfom_data.h_x.block<1, 3>(i,6) = norm_vec.transpose()*dt;
+        ekfom_data.h_x.block<1, 3>(i,6) = weight*norm_vec.transpose()*dt;
         // std::cout << "Hello H 0.62" << std::endl; 
         M3D point_rot_crossmat;
         // std::cout << "Hello H 0.63" << std::endl; 
         V3D point_rot = res.toRotationMatrix()*s.rot.toRotationMatrix()*point_this;
         point_rot_crossmat<<SKEW_SYM_MATRX(point_rot);
         // std::cout << "Hello H 0.7" << std::endl; 
-        ekfom_data.h_x.block<1, 3>(i,15) = -norm_vec.transpose()*point_rot_crossmat*dt;
-        ekfom_data.h_x.block<1, 3>(i,18) = 0.5*norm_vec.transpose()*dt*dt;
+        ekfom_data.h_x.block<1, 3>(i,15) = -weight*norm_vec.transpose()*point_rot_crossmat*dt;
+        ekfom_data.h_x.block<1, 3>(i,18) = 0.5*weight*norm_vec.transpose()*dt*dt;
         // std::cout << "Hello H 0.8" << std::endl; 
         if (extrinsic_est_en)
         {
-            ekfom_data.h_x.block<1, 3>(i,9) = -norm_vec.transpose()*res.toRotationMatrix()*s.rot.toRotationMatrix()*s.offset_R_L_I.toRotationMatrix()*point_be_crossmat;
-            ekfom_data.h_x.block<1, 3>(i,12) = norm_vec.transpose()*res.toRotationMatrix()*s.rot.toRotationMatrix();
+            ekfom_data.h_x.block<1, 3>(i,9) = -weight*norm_vec.transpose()*res.toRotationMatrix()*s.rot.toRotationMatrix()*s.offset_R_L_I.toRotationMatrix()*point_be_crossmat;
+            ekfom_data.h_x.block<1, 3>(i,12) = weight*norm_vec.transpose()*res.toRotationMatrix()*s.rot.toRotationMatrix();
         }
         // std::cout << "Hello H 0.9" << std::endl;        
         /*** Measuremnt: distance to the closest surface/corner ***/
-        ekfom_data.h(i) = -norm_p.intensity;
+        ekfom_data.h(i) = -weight*norm_p.intensity;
     }    
 
     Eigen::Quaterniond quat_cur;
@@ -1022,6 +1026,7 @@ int main(int argc, char** argv)
     nh.param<int>("preprocess/timestamp_unit", p_pre->time_unit, US);
     nh.param<int>("preprocess/scan_rate", p_pre->SCAN_RATE, 10);
     nh.param<int>("point_filter_num", p_pre->point_filter_num, 2);
+    nh.param<bool>("mapping/use_kernal", use_kernal, false);
     nh.param<bool>("feature_extract_enable", p_pre->feature_enabled, false);
     nh.param<bool>("runtime_pos_log_enable", runtime_pos_log, 0);
     nh.param<bool>("mapping/extrinsic_est_en", extrinsic_est_en, true);
