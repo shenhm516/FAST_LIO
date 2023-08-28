@@ -29,7 +29,7 @@
 #define MAX_INI_COUNT (10)
 
 const bool time_list(PointType &x, PointType &y) {return (x.curvature < y.curvature);};
-
+bool runtime_pos_log = false;
 /// *************IMU Process and undistortion
 class ImuProcess
 {
@@ -235,7 +235,7 @@ void ImuProcess::UndistortPcl(const MeasureGroup &meas, esekfom::esekf<state_ikf
   
   /*** sort point clouds by offset time ***/
   pcl_out = *(meas.lidar);
-  sort(pcl_out.points.begin(), pcl_out.points.end(), time_list);
+  // sort(pcl_out.points.begin(), pcl_out.points.end(), time_list);
   // cout<<"[ IMU Process ]: Process lidar from "<<pcl_beg_time<<" to "<<pcl_end_time<<", " \
   //          <<meas.imu.size()<<" imu msgs from "<<imu_beg_time<<" to "<<imu_end_time<<endl;
 
@@ -313,7 +313,8 @@ void ImuProcess::UndistortPcl(const MeasureGroup &meas, esekfom::esekf<state_ikf
                     0.5 * (head->linear_acceleration.y + tail->linear_acceleration.y),
                     0.5 * (head->linear_acceleration.z + tail->linear_acceleration.z);
 
-    // fout_imu << setw(10) << head->header.stamp.toSec() - first_lidar_time << " " << angvel_avr.transpose() << " " << acc_avr.transpose() << endl;
+    if (runtime_pos_log) 
+      fout_imu << setw(10) << head->header.stamp.toSec() - first_lidar_time << " " << acc_avr_cur.transpose() << " " << angvel_avr_cur.transpose() << endl;
 
     acc_avr_cur     = acc_avr_cur * G_m_s2 / mean_acc.norm(); // - state_inout.ba;
 
@@ -352,7 +353,10 @@ void ImuProcess::Process(const MeasureGroup &meas,  esekfom::esekf<state_ikfom, 
   double t1,t2,t3;
   t1 = omp_get_wtime();
 
-  if(meas.imu.empty() || meas.imu_cur.empty()) {return;};
+  if(meas.imu.empty() || meas.imu_cur.empty()) {
+    // std::cout << "Hello" << meas.imu.size() << " " << meas.imu_cur.size() << std::endl;
+    return;
+  };
   ROS_ASSERT(meas.lidar != nullptr);
 
   if (imu_need_init_)

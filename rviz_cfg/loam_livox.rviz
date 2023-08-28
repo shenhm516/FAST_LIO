@@ -129,7 +129,7 @@ Visualization Manager:
           Topic: /cloud_registered
           Unreliable: false
           Use Fixed Frame: true
-          Use rainbow: true
+          Use rainbow: false
           Value: true
         - Alpha: 1
           Autocompute Intensity Bounds: true
@@ -338,7 +338,7 @@ Visualization Manager:
   Global Options:
     Background Color: 0; 0; 0
     Default Light: true
-    Fixed Frame: camera_init
+    Fixed Frame: world
     Frame Rate: 10
   Name: root
   Tools:
@@ -362,7 +362,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz/Orbit
-      Distance: 75.94361114501953
+      Distance: 218.38235473632812
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -378,9 +378,9 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 1.2197964191436768
+      Pitch: 1.009796380996704
       Target Frame: global
-      Yaw: 3.6871702671051025
+      Yaw: 3.6221702098846436
     Saved: ~
 Window Geometry:
   Displays:
@@ -399,4 +399,4 @@ Window Geometry:
     collapsed: true
   Width: 1908
   X: -32
-  Y: -32
+  Y: 1048
