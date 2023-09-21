@@ -58,6 +58,7 @@ class ImuProcess
   V3D cov_gyr_scale;
   V3D cov_bias_gyr;
   V3D cov_bias_acc;
+  V3D mean_acc;
   double first_lidar_time;
 
  private:
@@ -71,7 +72,6 @@ class ImuProcess
   vector<M3D>    v_rot_pcl_;
   M3D Lidar_R_wrt_IMU;
   V3D Lidar_T_wrt_IMU;
-  V3D mean_acc;
   V3D mean_gyr;
   double start_timestamp_;
   double last_lidar_beg_time_;
@@ -213,6 +213,7 @@ void ImuProcess::IMU_init(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 
 
   esekfom::esekf<state_ikfom, 12, input_ikfom>::cov init_P = kf_state.get_P();
   init_P.setIdentity();
+  init_P = init_P*0.1;
   init_P(9,9) = init_P(10,10) = init_P(11,11) = 0.00001; //offset_R_L_I
   init_P(12,12) = init_P(13,13) = init_P(14,14) = 0.00001; //offset_T_L_I
   init_P(30,30) = init_P(31,31) = init_P(32,32) = 0.0001;//bg

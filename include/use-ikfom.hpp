@@ -65,6 +65,7 @@ Eigen::Matrix<double, 39, 1> get_f(state_ikfom &s, const input_ikfom &in)
 		if (in.acc != Zero3d || in.gyro != Zero3d) {
 			res(i) = s.vel[i];
 			res(i + 3) = omega[i]; 
+			// res(i + 3) = s.omg[i]; 
 			res(i + 6) = a_inertial[i] + s.grav[i];
 		}
 		if (in.acc_cur != Zero3d || in.gyro_cur != Zero3d) {
@@ -73,6 +74,7 @@ Eigen::Matrix<double, 39, 1> get_f(state_ikfom &s, const input_ikfom &in)
 			res(i + 27) = a_inertial_cur[i] + s.grav[i];
 		} 
 	}
+	// std::cout << (s.omg - omega).transpose() << std::endl;
 	// std::cout << "Hello f 1" << std::endl;
 	return res;
 }
@@ -94,6 +96,7 @@ Eigen::Matrix<double, 39, 38> df_dx(state_ikfom &s, const input_ikfom &in)
 		s.S2_Mx(grav_matrix, vec, 36);
 		cov.template block<3, 2>(6, 36) =  grav_matrix; 
 		cov.template block<3, 3>(3, 30) = -Eigen::Matrix3d::Identity(); 
+		// cov.template block<3, 3>(3, 15) = Eigen::Matrix3d::Identity(); 
 	}
 	if (in.acc_cur != Zero3d || in.gyro_cur != Zero3d) {
 		cov.template block<3, 3>(21, 27) = Eigen::Matrix3d::Identity(); 
@@ -115,8 +118,8 @@ Eigen::Matrix<double, 39, 12> df_dw(state_ikfom &s, const input_ikfom &in)
 	if (in.acc != Zero3d || in.gyro != Zero3d) {
 		cov.template block<3, 3>(6, 3) = -s.rot.toRotationMatrix();
 		cov.template block<3, 3>(3, 0) = -Eigen::Matrix3d::Identity();
-		cov.template block<3, 3>(15, 0) = Eigen::Matrix3d::Identity();
-		cov.template block<3, 3>(18, 3) = Eigen::Matrix3d::Identity();
+		cov.template block<3, 3>(15, 0) = 5*Eigen::Matrix3d::Identity();
+		cov.template block<3, 3>(18, 3) = 5*Eigen::Matrix3d::Identity();
 		cov.template block<3, 3>(30, 6) = Eigen::Matrix3d::Identity();
 		cov.template block<3, 3>(33, 9) = Eigen::Matrix3d::Identity();
 	}

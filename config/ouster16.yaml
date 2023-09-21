@@ -19,6 +19,7 @@ mapping:
     b_gyr_cov: 3.0e-6
     fov_degree:    180
     det_range:     100.0
+    lidar_mean_scantime: 0.01
     root_surf_voxel_size: 4
     use_kernal: false              # true: enable kernal function in observation function h(x)
     extrinsic_est_en:  false      # true: enable the online estimation of IMU-LiDAR extrinsic

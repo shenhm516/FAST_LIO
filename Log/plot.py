@@ -47,6 +47,7 @@ for i in range(3):
     # axs[0].plot(time, imu[:,i+1],'.-', label=lab_1[i])
     axs[i].plot(time, imu[:,i+4],'.-', label=lab_2[i])
     axs[i].plot(time_kf, kf[:,i+7],'.-', label=lab_2[i])
+# plt.plot(time_kf, kf[:,16],'.-', label=lab_2[i])
 # for i in range(2):
 #     # axs[i].set_xlim(386,389)
 #     axs[i].grid()

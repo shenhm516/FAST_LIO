@@ -159,6 +159,10 @@ PointCloudXYZI::Ptr  ptr_seg(new PointCloudXYZI());
 double lidar_mean_scantime = 0.01;
 ros::Publisher pubLaserCloudSeg;
 
+V3D last_P_cur(Zero3d);
+V3D last_V_cur(Zero3d);
+Eigen::Quaternion<double> last_Q_cur;
+
 void SigHandle(int sig)
 {
     flg_exit = true;
@@ -508,7 +512,7 @@ bool sync_packages(MeasureGroup &meas)
         imu_buffer.pop_front();
         imu_time = imu_buffer.front()->header.stamp.toSec();
     }
-    // std::cout << meas.imu.size() << " " << meas.imu_cur.size() << std::endl;
+    // std::cout << meas.imu.size() << " input " << meas.imu_cur.size() << std::endl;
 
     lidar_buffer.pop_front();
     time_buffer.pop_front();
@@ -821,10 +825,8 @@ void h_share_model(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_
         
 #ifdef USE_voxel
         float loc_xyz[3];            
-        loc_xyz[0] = p_global(0) / rootSurfVoxelSize;
-        loc_xyz[1] = p_global(1) / rootSurfVoxelSize;
-        loc_xyz[2] = p_global(2) / rootSurfVoxelSize;
         for(int j=0; j<3; j++) {
+            loc_xyz[j] = p_global(j) / rootSurfVoxelSize;
             if(loc_xyz[j] < 0) loc_xyz[j] -= 1.0;
         }
         VOXEL_LOC position((int64_t)loc_xyz[0], (int64_t)loc_xyz[1], (int64_t)loc_xyz[2]);
@@ -927,8 +929,14 @@ void h_share_model(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_
     double solve_start_  = omp_get_wtime();
     
     /*** Computation of Measuremnt Jacobian matrix H and measurents vector ***/
-    ekfom_data.h_x = MatrixXd::Zero(effct_feat_num+9, 30); //23 
-    ekfom_data.h.resize(effct_feat_num+9);  //shm: this is the Z-h(x) vector, not h(x)
+    // if(!Measures.imu.empty()) {
+    //     ekfom_data.h_x = MatrixXd::Zero(effct_feat_num+15, 33); //23 
+    //     ekfom_data.h.resize(effct_feat_num+15);  //shm: this is the Z-h(x) vector, not h(x)
+    // } else {
+    ekfom_data.h_x = MatrixXd::Zero(effct_feat_num+18, 30); //23 
+    ekfom_data.h.resize(effct_feat_num+18);  //shm: this is the Z-h(x) vector, not h(x)
+    // }
+
     // std::cout << "Hello H 0.9" << std::endl; 
     // double max_dt = 0;
 #ifdef MP_EN
@@ -990,7 +998,7 @@ void h_share_model(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_
     ekfom_data.h.block<3, 1>(effct_feat_num,0) = 2*res_quat.vec();
     ekfom_data.h_x.block<3, 3>(effct_feat_num,24) = -(Qright(quat_cur)*Qleft((d_quat*quat).conjugate())).bottomRightCorner<3, 3>();
     ekfom_data.h_x.block<3, 3>(effct_feat_num,3) = (Qright(d_quat.conjugate()*quat_cur)*Qleft(quat.conjugate())).bottomRightCorner<3, 3>();
-    ekfom_data.h_x.block<3, 3>(effct_feat_num,15) = lidar_mean_scantime*(Qright(quat_cur)*Qleft((d_quat*quat).conjugate())).bottomRightCorner<3, 3>();
+    ekfom_data.h_x.block<3, 3>(effct_feat_num,15) = lidar_mean_scantime*(Qright(quat_cur)*Qleft((quat).conjugate())).bottomRightCorner<3, 3>();
     
     ekfom_data.h.block<3, 1>(effct_feat_num+3,0) = s.pos_cur - s.pos - s.vel*lidar_mean_scantime - 0.5*s.acc*lidar_mean_scantime*lidar_mean_scantime;
     ekfom_data.h_x.block<3, 3>(effct_feat_num+3,21) = -Eigen::Matrix3d::Identity();
@@ -1002,7 +1010,53 @@ void h_share_model(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_
     ekfom_data.h_x.block<3, 3>(effct_feat_num+6,27) = -Eigen::Matrix3d::Identity();
     ekfom_data.h_x.block<3, 3>(effct_feat_num+6,6) = Eigen::Matrix3d::Identity();
     ekfom_data.h_x.block<3, 3>(effct_feat_num+6,18) = Eigen::Matrix3d::Identity()*lidar_mean_scantime;
+
+    Eigen::Quaternion<double> q = s.rot;
+    ekfom_data.h.block<3, 1>(effct_feat_num+9,0) = (last_Q_cur.conjugate()*q).vec();
+    ekfom_data.h_x.block<3, 3>(effct_feat_num+9,3) = -(Qright(q)*Qleft(last_Q_cur.conjugate())).bottomRightCorner<3, 3>();
+
+    ekfom_data.h.block<3, 1>(effct_feat_num+12,0) = (last_P_cur - s.pos);
+    ekfom_data.h_x.block<3, 3>(effct_feat_num+12,0) = Eigen::Matrix3d::Identity();
+
+    ekfom_data.h.block<3, 1>(effct_feat_num+15,0) = (last_V_cur - s.vel);
+    ekfom_data.h_x.block<3, 3>(effct_feat_num+15,6) = Eigen::Matrix3d::Identity();
+
     // std::cout << "Hello H 1" << std::endl;
+    // std::cout << Measures.imu.size() << " output " << Measures.imu_cur.size() << std::endl;
+    // V3D omg_mean = Zero3d;
+    // V3D acc_mean = Zero3d;
+    // M3D dhdR(M3D::Zero());
+    // M3D dhdba(M3D::Zero());
+    // for(int i=0; i<Measures.imu.size(); i++) {
+    //     V3D omg(Measures.imu[i]->angular_velocity.x, Measures.imu[i]->angular_velocity.y, Measures.imu[i]->angular_velocity.z);
+    //     omg_mean += omg/Measures.imu.size();
+    //     // V3D acc(Measures.imu[i]->linear_acceleration.x, Measures.imu[i]->linear_acceleration.y, Measures.imu[i]->linear_acceleration.z);
+    //     // acc = acc * G_m_s2 / p_imu->mean_acc.norm();
+    //     // acc_mean += s.rot*(acc-s.ba)/Measures.imu.size();
+    //     // M3D acc_crossmat;
+    //     // V3D acc_gt;
+    //     // acc_gt = acc-s.ba;
+    //     // acc_crossmat = skew_sym_mat(acc_gt);
+    //     // dhdR += -s.rot.toRotationMatrix()*acc_crossmat/Measures.imu.size();
+    //     // dhdba += -s.rot.toRotationMatrix()/Measures.imu.size();
+    // }
+    // if(!Measures.imu.empty()) {
+    //     ekfom_data.h.block<3, 1>(effct_feat_num+9,0) = s.omg - (omg_mean-s.bg);
+    //     ekfom_data.h_x.block<3, 3>(effct_feat_num+9,15) = -Eigen::Matrix3d::Identity();
+    //     ekfom_data.h_x.block<3, 3>(effct_feat_num+9,30) = -Eigen::Matrix3d::Identity();
+
+    //     V3D grav;
+    //     for(int i=0; i<3; i++) grav(i) = s.grav[i];
+    //     std::cout << (s.acc - (acc_mean + grav)).transpose() << std::endl;
+    //     ekfom_data.h.block<3, 1>(effct_feat_num+12,0) = s.acc - (acc_mean + grav);        
+    //     ekfom_data.h_x.block<3, 3>(effct_feat_num+12,18) = -Eigen::Matrix3d::Identity();
+    //     // ekfom_data.h_x.block<3, 3>(effct_feat_num+12,3) = dhdR;
+    //     // ekfom_data.h_x.block<3, 3>(effct_feat_num+12,33) = dhdba;
+    //     // Eigen::Matrix<state_ikfom::scalar, 2, 1> vec = Eigen::Matrix<state_ikfom::scalar, 2, 1>::Zero();
+	// 	// Eigen::Matrix<state_ikfom::scalar, 3, 2> grav_matrix;
+	// 	// s.S2_Mx(grav_matrix, vec, 36);
+    //     // ekfom_data.h_x.block<3, 2>(effct_feat_num+12,36) = grav_matrix;
+    // }
     solve_time += omp_get_wtime() - solve_start_;
 }
 
@@ -1033,6 +1087,7 @@ int main(int argc, char** argv)
     nh.param<double>("mapping/acc_cov",acc_cov,0.1);
     nh.param<double>("mapping/b_gyr_cov",b_gyr_cov,0.0001);
     nh.param<double>("mapping/b_acc_cov",b_acc_cov,0.0001);
+    nh.param<double>("mapping/lidar_mean_scantime",lidar_mean_scantime,0.01);
     nh.param<double>("preprocess/blind", p_pre->blind, 0.01);
     nh.param<int>("preprocess/lidar_type", p_pre->lidar_type, AVIA);
     nh.param<int>("preprocess/scan_line", p_pre->N_SCANS, 16);
@@ -1226,6 +1281,11 @@ int main(int argc, char** argv)
             geoQuat.y = state_point.rot_cur.coeffs()[1];
             geoQuat.z = state_point.rot_cur.coeffs()[2];
             geoQuat.w = state_point.rot_cur.coeffs()[3];
+
+            last_P_cur = state_point.pos_cur;
+            last_V_cur = state_point.vel_cur;
+            Eigen::Quaternion<double> quat_cur(state_point.rot_cur.toRotationMatrix());
+            last_Q_cur = quat_cur;
 
             double t_update_end = omp_get_wtime();
             // std::cout << "Hello 3" << std::endl;
