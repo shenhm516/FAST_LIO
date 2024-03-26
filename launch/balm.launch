@@ -1,0 +1,18 @@
+<launch>
+	<node pkg="tf2_ros" type="static_transform_publisher"
+		name="world_vio_init_pub" args="0 0 0 0 1 0 0 camera_init slam_init" /> 
+		
+	<arg name="rviz" default="true" />
+	<group if="$(arg rviz)">
+		<node launch-prefix="nice" pkg="rviz" type="rviz" name="rviz" args="-d $(find fast_lio)/rviz_cfg/back.rviz" />
+	</group>  
+
+	<param name="voxel_size" type="double" value="0.5" />
+	<!-- <param name="point_range" type="double" value="10" />
+	<param name="pcd_file_name" type="string" value="PSAPrimeMover_" /> -->
+	<param name="point_range" type="double" value="1000" />
+	<param name="pcd_file_name" type="string" value="psacalibr_" />
+	
+	<!-- <param name="file_path" type="string" value="$(find balm2)" /> -->
+	<node pkg="fast_lio" type="psa_consist_map" name="psa_consist_map" output="screen" />
+</launch>

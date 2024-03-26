@@ -1,0 +1,18 @@
+<launch>
+<!-- Launch file for ouster OS2-32 LiDAR -->
+
+    <arg name="rviz" default="true" />
+    
+    <group if="$(arg rviz)">
+        <node launch-prefix="nice" pkg="rviz" type="rviz" name="rviz" args="-d $(find fast_lio)/rviz_cfg/map_merge.rviz" />
+    </group>
+	<rosparam command="load" file="$(find fast_lio)/config/map_merge.yaml" />
+    <!-- <param name="lidar_topic" type="string" value="/nt_topic/sensor/lidar3d_32_right_front_high"/> -->
+    <!-- <param name="base_map_file_path" type="string" value="psa_scan.pcd"/> -->
+    <param name="base_map_file_path" type="string" value="PSAPrimeMover.pcd"/>
+    <!-- <param name="source_map_file_path" type="string" value="front2.pcd"/> -->
+    <node pkg="fast_lio" type="map_merge" name="laserMapping" output="screen" /> 
+
+    <node pkg="tf2_ros" type="static_transform_publisher"
+          name="world_vio_init_pub" args="0 0 0 0 1 0 0 camera_init slam_init" /> 
+</launch>
