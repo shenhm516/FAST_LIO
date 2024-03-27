@@ -54,6 +54,7 @@ find_package(catkin REQUIRED COMPONENTS
   livox_ros_driver
   message_generation
   eigen_conversions
+  selected_points_publisher
 )
 
 find_package(Eigen3 REQUIRED)
@@ -97,3 +98,7 @@ target_include_directories(map_merge PRIVATE ${PYTHON_INCLUDE_DIRS})
 add_executable(psa_consist_map map_merge_src/psa_consist_map.cpp)
 target_link_libraries(psa_consist_map ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${PYTHON_LIBRARIES} ${OpenCV_LIBRARIES})
 target_include_directories(psa_consist_map PRIVATE ${PYTHON_INCLUDE_DIRS})
+
+add_executable(rviz_point_subcriber map_merge_src/rviz_point_subcriber.cpp)
+target_link_libraries(rviz_point_subcriber ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${PYTHON_LIBRARIES} ${OpenCV_LIBRARIES})
+target_include_directories(rviz_point_subcriber PRIVATE ${PYTHON_INCLUDE_DIRS})

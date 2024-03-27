@@ -83,19 +83,19 @@ void read_file(vector<IMUST> &x_buf, vector<pcl::PointCloud<PointType>::Ptr> &pl
 
 void data_show(vector<IMUST> x_buf, vector<pcl::PointCloud<PointType>::Ptr> &pl_fulls)
 {
-  IMUST es0 = x_buf[0];
-  for(uint i=0; i<x_buf.size(); i++)
-  {
-    x_buf[i].p = es0.R.transpose() * (x_buf[i].p - es0.p);
-    x_buf[i].R = es0.R.transpose() * x_buf[i].R;
-  }
+  // IMUST es0 = x_buf[0];
+  // for(uint i=0; i<x_buf.size(); i++)
+  // {
+  //   x_buf[i].p = es0.R.transpose() * (x_buf[i].p - es0.p);
+  //   x_buf[i].R = es0.R.transpose() * x_buf[i].R;
+  // }
 
   pcl::PointCloud<PointType> pl_send, pl_path;
   int winsize = x_buf.size();
   for(int i=0; i<winsize; i++)
   {
     pcl::PointCloud<PointType> pl_tem = *pl_fulls[i];
-    down_sampling_voxel(pl_tem, 0.05);
+    // down_sampling_voxel(pl_tem, 0.05);
     pl_transform(pl_tem, x_buf[i]);
     pl_send += pl_tem;
 
@@ -139,12 +139,12 @@ int main(int argc, char **argv)
   // n.param<string>("file_path", file_path, "");
   read_file(x_buf, pl_fulls, file_path);
 
-  IMUST es0 = x_buf[0];
-  for(uint i=0; i<x_buf.size(); i++)
-  {
-    x_buf[i].p = es0.R.transpose() * (x_buf[i].p - es0.p);
-    x_buf[i].R = es0.R.transpose() * x_buf[i].R;
-  }
+  // IMUST es0 = x_buf[0];
+  // for(uint i=0; i<x_buf.size(); i++)
+  // {
+  //   x_buf[i].p = es0.R.transpose() * (x_buf[i].p - es0.p);
+  //   x_buf[i].R = es0.R.transpose() * x_buf[i].R;
+  // }
 
   win_size = x_buf.size();
   printf("The size of poses: %d\n", win_size);

@@ -28,6 +28,16 @@ roslaunch fast_lio mapping_ouster32.launch
 roslaunch fast_lio balm.launch
 ```
 
+**Caculate centroid for Selected Points**
+
+This function rely on the ```selected_point_publisher``` [RVIZ plugin](https://github.com/drwnz/selected_points_publisher). 
+
+Run this ROS node and select the pointcloud on RVIZ. The ROS node will publish the centroid for selected Points.
+
+```
+rosrun fast_lio rviz_point_subcriber
+```
+
 ## Related Works and Extended Application
 
 **SLAM:**

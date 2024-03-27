@@ -8,8 +8,8 @@
 	</group>  
 
 	<param name="voxel_size" type="double" value="0.5" />
-	<!-- <param name="point_range" type="double" value="10" />
-	<param name="pcd_file_name" type="string" value="PSAPrimeMover_" /> -->
+	<!-- <param name="point_range" type="double" value="20" /> -->
+	<!-- <param name="pcd_file_name" type="string" value="PSAPrimeMover_" /> -->
 	<param name="point_range" type="double" value="1000" />
 	<param name="pcd_file_name" type="string" value="psacalibr_" />
 	
