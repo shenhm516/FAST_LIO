@@ -269,7 +269,7 @@ void Preprocess::oust64_handler(const sensor_msgs::PointCloud2::ConstPtr &msg)
       added_pt.normal_y = 0;
       added_pt.normal_z = 0;
       added_pt.curvature = pl_orig.points[i].t * time_unit_scale; // curvature unit: ms
-
+      // std::cout << added_pt.curvature << std::endl;
       pl_surf.points.push_back(added_pt);
     }
   }

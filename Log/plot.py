@@ -45,8 +45,11 @@ lab_2 = ['acc-x', 'acc-y', 'acc-z']
 for i in range(3):
     # if i==1:
     # axs[0].plot(time, imu[:,i+1],'.-', label=lab_1[i])
-    axs[i].plot(time, imu[:,i+4],'.-', label=lab_2[i])
-    axs[i].plot(time_kf, kf[:,i+7],'.-', label=lab_2[i])
+    # axs[i].plot(time, imu[:,i+1],'.-', label=lab_2[i]) # acc
+    axs[i].plot(time, imu[:,i+4],'.-', label=lab_2[i]) # omg
+    # axs[i].plot(time_kf, kf[:,i+13],'.-', label=lab_2[i]) # acc
+    axs[i].plot(time_kf, kf[:,i+7],'.-', label=lab_2[i]) # omg
+    # axs[i].plot(time_kf, kf[:,i+4],'.-', label=lab_2[i])
 # plt.plot(time_kf, kf[:,16],'.-', label=lab_2[i])
 # for i in range(2):
 #     # axs[i].set_xlim(386,389)
