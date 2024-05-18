@@ -1,5 +1,5 @@
-#ifndef COMMON_LIB_H
-#define COMMON_LIB_H
+#ifndef COMMON_LIB_HPP
+#define COMMON_LIB_HPP
 
 #include <so3_math.h>
 #include <Eigen/Eigen>
@@ -33,6 +33,30 @@ using namespace Eigen;
 #define STD_VEC_FROM_EIGEN(mat)  vector<decltype(mat)::Scalar> (mat.data(), mat.data() + mat.rows() * mat.cols())
 #define DEBUG_FILE_DIR(name)     (string(string(ROOT_DIR) + "Log/"+ name))
 
+// namespace mlio {
+//   struct EIGEN_ALIGN16 Point {
+//       PCL_ADD_POINT4D;
+//       float intensity;
+//       float normal_x;
+//       float normal_y;
+//       float normal_z;
+//       float curvature;
+//       EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+//   };
+// }  // namespace velodyne_ros
+// POINT_CLOUD_REGISTER_POINT_STRUCT(mlio::Point,
+//     (float, x, x)
+//     (float, y, y)
+//     (float, z, z)
+//     (float, intensity, intensity)
+//     (float, normal_x, normal_x)
+//     (float, normal_y, normal_y)
+//     (float, normal_z, normal_z)
+//     (float, curvature, curvature)
+// )
+
+// typedef mlio::Point PointType;
+
 typedef fast_lio::Pose6D Pose6D;
 typedef pcl::PointXYZINormal PointType;
 typedef pcl::PointCloud<PointType> PointCloudXYZI;
@@ -61,9 +85,23 @@ struct MeasureGroup     // Lidar data and imu dates for the curent process
     };
     double lidar_beg_time;
     double lidar_end_time;
-    PointCloudXYZI lidar;
+    std::vector<PointCloudXYZI> lidar; //todo: set as std::vector<PointCloudXYZI> lidar for multi-lidar SLAM
     deque<sensor_msgs::Imu::ConstPtr> imu;
     deque<sensor_msgs::Imu::ConstPtr> imu_cur;
+};
+
+struct LidarMsgGroup     // Lidar data and imu dates for the curent process
+{
+    LidarMsgGroup()
+    {
+        msg_beg_time = 0.0;
+        // this->lidar.reset(new PointCloudXYZI());
+    };
+    double msg_beg_time;
+    double msg_end_time;
+    double point_beg_time;
+    PointCloudXYZI cloud;
+    int lidar_id;
 };
 
 // struct StatesGroup

@@ -118,8 +118,8 @@ Eigen::Matrix<double, 39, 12> df_dw(state_ikfom &s, const input_ikfom &in)
 	if (in.acc != Zero3d || in.gyro != Zero3d) {
 		cov.template block<3, 3>(6, 3) = -s.rot.toRotationMatrix();
 		cov.template block<3, 3>(3, 0) = -Eigen::Matrix3d::Identity();
-		cov.template block<3, 3>(15, 0) = 5*Eigen::Matrix3d::Identity();
-		cov.template block<3, 3>(18, 3) = 5*Eigen::Matrix3d::Identity();
+		cov.template block<3, 3>(15, 0) = Eigen::Matrix3d::Identity();
+		cov.template block<3, 3>(18, 3) = Eigen::Matrix3d::Identity();
 		cov.template block<3, 3>(30, 6) = Eigen::Matrix3d::Identity();
 		cov.template block<3, 3>(33, 9) = Eigen::Matrix3d::Identity();
 	}

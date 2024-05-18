@@ -8,7 +8,7 @@
 #include <ros/ros.h>
 #include <so3_math.h>
 #include <Eigen/Eigen>
-#include <common_lib.h>
+#include <common_lib.hpp>
 #include <pcl/common/io.h>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
@@ -29,8 +29,15 @@
 #define MAX_INI_COUNT (10)
 
 const bool time_list(PointType &x, PointType &y) {return (x.curvature < y.curvature);};
+const bool norm_list(std::pair<int,double> &x, std::pair<int,double> &y) {return (x.second > y.second);};
 bool runtime_pos_log = false;
+
+int lidar_num = 1;
+std::vector<Eigen::Vector3d> Textrinsic;
+std::vector<Eigen::Matrix<double,3,3>> Rextrinsic;
 /// *************IMU Process and undistortion
+
+
 class ImuProcess
 {
  public:
@@ -224,6 +231,18 @@ void ImuProcess::IMU_init(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 
   last_imu_cur_ = meas.imu_cur.back();
 }
 
+void pointLidarToLidar(PointType const * const pi, PointType * const po, const int lidar_id)
+{
+    V3D p_body(pi->x, pi->y, pi->z);
+    double dt = pi->curvature/double(1000);
+    V3D p_global(Rextrinsic[lidar_id]*p_body + Textrinsic[lidar_id]);
+
+    po->x = p_global(0);
+    po->y = p_global(1);
+    po->z = p_global(2);
+    po->intensity = pi->intensity;
+}
+
 void ImuProcess::UndistortPcl(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state, PointCloudXYZI &pcl_out)
 {
   /*** add the imu of the last frame-tail to the of current frame-head ***/
@@ -236,7 +255,18 @@ void ImuProcess::UndistortPcl(const MeasureGroup &meas, esekfom::esekf<state_ikf
   
   /*** sort point clouds by offset time ***/
   // pcl_out = *(meas.lidar);
-  pcl_out = meas.lidar;
+  pcl_out.clear();
+  for (int i=0; i<lidar_num; i++) {
+    // std::cout << i << " " << meas.lidar[i].size() << std::endl;
+    if(i) {
+      PointCloudXYZI feats_lidar;
+      feats_lidar.resize(meas.lidar[i].size());
+      for (int j=0; j<meas.lidar[i].size(); j++) {
+        pointLidarToLidar(&(meas.lidar[i].points[j]), &(feats_lidar.points[j]),i);
+      }
+      pcl_out += feats_lidar;
+    } else pcl_out += meas.lidar[i]; //todo: Project lidar points into body frame
+  }
   // sort(pcl_out.points.begin(), pcl_out.points.end(), time_list);
   // cout<<"[ IMU Process ]: Process lidar from "<<pcl_beg_time<<" to "<<pcl_end_time<<", " \
   //          <<meas.imu.size()<<" imu msgs from "<<imu_beg_time<<" to "<<imu_end_time<<endl;

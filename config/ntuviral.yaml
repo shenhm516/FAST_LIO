@@ -1,36 +1,30 @@
 common:
-    lidar_num: 6    
-    lid_topic:  ["/ouster/points",                
-                "/nt_topic/sensor/lidar3d_32_right_front_high",
-                "/nt_topic/sensor/lidar3d_32_left_front_high",
-                "/nt_topic/sensor/lidar3d_32_top_front",
-                "/nt_topic/sensor/lidar3d_m1_front",
-                "/nt_topic/sensor/lidar3d_m1_left_front_low"
-                ]
-    imu_topic:  "/ouster/imu"
+    lidar_num: 1   
+    lid_topic:  ["/os1_cloud_node1/points",  /os1_cloud_node2/points]
+    imu_topic:  "/imu/imu"
     # imu_topic: "/vectornav/IMU"
     time_sync_en: false         # ONLY turn on when external time synchronization is really not possible
-    time_offset_lidar_to_imu: 0.0 # Time offset between lidar and IMU calibrated by other algorithms, e.g. LI-Init (can be found in README).
+    time_offset_lidar_to_imu: -0.1 # Time offset between lidar and IMU calibrated by other algorithms, e.g. LI-Init (can be found in README).
                                   # This param will take effect no matter what time_sync_en is. So if the time offset is not known exactly, please set as 0.0
     imu_odom_topic: "/Odometry/Imu"
     
 preprocess:
-    lidar_type: [3,4,4,4,4,4]                # 1 for Livox serials LiDAR, 2 for Velodyne LiDAR, 3 for ouster LiDAR, 4 for robosense LiDAR
-    scan_line: [32,32,32,32,32,32]
-    timestamp_unit: [3,2,2,2,2,2]                 # 0-second, 1-milisecond, 2-microsecond, 3-nanosecond.
-    blind: 2.0
+    lidar_type: [3,3]                # 1 for Livox serials LiDAR, 2 for Velodyne LiDAR, 3 for ouster LiDAR, 4 for robosense LiDAR
+    scan_line: [16,16]
+    timestamp_unit: [3,3]                 # 0-second, 1-milisecond, 2-microsecond, 3-nanosecond.
+    blind: 2
 
 mapping:
-    acc_cov: 6.0e-2
-    gyr_cov: 5.0e-3
-    b_acc_cov: 8.0e-5
-    b_gyr_cov: 3.0e-6
+    acc_cov: 0.1
+    gyr_cov: 0.1
+    b_acc_cov: 0.0001
+    b_gyr_cov: 0.0001
     # fov_degree:    180
     det_range:     150.0
     # lidar_mean_scantime: 0.02
-    rate: 50 # means lidar_mean_scantime = 1/rate
-    root_surf_voxel_size: 1 
-    use_kernal: false              # true: enable kernal function in observation function h(x)
+    rate: 100 # means lidar_mean_scantime = 1/rate
+    root_surf_voxel_size: 3 
+    use_kernal: true              # true: enable kernal function in observation function h(x)
     extrinsic_est_en:  false      # true: enable the online estimation of IMU-LiDAR extrinsic
     # for ouster sensor frame (using VN100 IMU)
     # extrinsic_T: [ 0.0, 0.0, -0.065 ] 
@@ -49,20 +43,10 @@ mapping:
     # extrinsic_R: [-1, 0, 0,
     #               0, -1, 0,
     #               0, 0, 1]
-    extrinsic_T: [ -0.006253, 0.011775, 0.03055,    
-                   -0.0646609,    1.69186,  -0.433014,
-                   -0.0338164,  -0.629778,  -0.422086,
-                   0.746178, 0.541937,  1.49825,  
-                   -0.16631,  0.546087, -0.550965,
-                   -0.0443789,  -0.678975,  -0.580246
-                ] 
-    extrinsic_R: [0, 0, 0, 1,
-                  -0.8746, -0.0040, -0.0147, -0.4846,
-                  -0.8640, 0.0220, -0.0326, 0.5019,
-                  -0.0151,    0.0117,    0.9998,    0.0043,
-                  0.0293,    0.0315,   -0.0019,    0.9991,
-                  -0.8648,    0.0284,   -0.0260,    0.5007
-                  ]
+    extrinsic_T: [ -0.05, 0.0, 0.055,
+                -0.550, 0.030, 0.050] 
+    extrinsic_R: [1,0,0,0,
+                  0, 0, 0.7071, 0.7071]
 
     load_offline_map: false
     offline_map_path: "/work/ctvlimo_ws/src/FAST_LIO/PCD/GlobalMap.pcd"

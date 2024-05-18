@@ -19,10 +19,10 @@ echo "BAG DURATION:" $BAG_DUR "=> LOG_DUR:" $LOG_DUR;
 
 let ANC_MAX=ANC_ID_MAX+1
 
-export EXP_OUTPUT_DIR=$EPOC_DIR/result_${EXP_NAME}_${ANC_MAX}anc;
+export EXP_OUTPUT_DIR=$EPOC_DIR/result_${EXP_NAME};
 if ((FUSE_VIS==1))
 then
-export EXP_OUTPUT_DIR=${EXP_OUTPUT_DIR}_vis;
+export EXP_OUTPUT_DIR=${EXP_OUTPUT_DIR};
 fi
 echo OUTPUT DIR: $EXP_OUTPUT_DIR;
 
@@ -63,7 +63,7 @@ timeout $LOG_DUR rostopic echo -b $DATASET_LOCATION/$EXP_NAME/$EXP_NAME.bag -p -
 & \
 timeout $LOG_DUR rostopic echo -b $DATASET_LOCATION/$EXP_NAME/$EXP_NAME.bag -p --nostr --noarr /imu/imu > $EXP_OUTPUT_DIR/vn100_imu.csv \
 & \
-timeout $LOG_DUR rostopic echo -p --nostr --noarr /Odometry > $EXP_OUTPUT_DIR/predict_odom.csv
+timeout $LOG_DUR rostopic echo -p --nostr --noarr /Odometry > $EXP_OUTPUT_DIR/odometry.csv
 # & \
 # timeout $LOG_DUR rostopic echo -b $DATASET_LOCATION/$EXP_NAME/$EXP_NAME.bag -p --nostr --noarr /dji_sdk/imu > $EXP_OUTPUT_DIR/dji_sdk_imu.csv \
 # & \
