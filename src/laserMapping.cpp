@@ -84,6 +84,7 @@ condition_variable sig_buffer;
 
 string root_dir = ROOT_DIR;
 string map_file_path, lid_topic, imu_topic;
+string body_frame_id = "body";
 
 double res_mean_last = 0.05, total_residual = 0.0;
 double last_timestamp_lidar = 0, last_timestamp_imu = -1.0;
@@ -546,7 +547,7 @@ void publish_frame_body(const ros::Publisher & pubLaserCloudFull_body)
     sensor_msgs::PointCloud2 laserCloudmsg;
     pcl::toROSMsg(*laserCloudIMUBody, laserCloudmsg);
     laserCloudmsg.header.stamp = ros::Time().fromSec(lidar_end_time);
-    laserCloudmsg.header.frame_id = "body";
+    laserCloudmsg.header.frame_id = body_frame_id;
     pubLaserCloudFull_body.publish(laserCloudmsg);
     publish_count -= PUBFRAME_PERIOD;
 }
@@ -592,7 +593,7 @@ void set_posestamp(T & out)
 void publish_odometry(const ros::Publisher & pubOdomAftMapped)
 {
     odomAftMapped.header.frame_id = "camera_init";
-    odomAftMapped.child_frame_id = "body";
+    odomAftMapped.child_frame_id = body_frame_id;
     odomAftMapped.header.stamp = ros::Time().fromSec(lidar_end_time);// ros::Time().fromSec(lidar_end_time);
     set_posestamp(odomAftMapped.pose);
     pubOdomAftMapped.publish(odomAftMapped);
@@ -619,7 +620,7 @@ void publish_odometry(const ros::Publisher & pubOdomAftMapped)
     q.setY(odomAftMapped.pose.pose.orientation.y);
     q.setZ(odomAftMapped.pose.pose.orientation.z);
     transform.setRotation( q );
-    br.sendTransform( tf::StampedTransform( transform, odomAftMapped.header.stamp, "camera_init", "body" ) );
+    br.sendTransform( tf::StampedTransform( transform, odomAftMapped.header.stamp, "camera_init", body_frame_id ) );
 }
 
 void publish_path(const ros::Publisher pubPath)
@@ -769,6 +770,11 @@ int main(int argc, char** argv)
     ros::init(argc, argv, "laserMapping");
     ros::NodeHandle nh;
 
+    // Get namespace and construct body frame id
+    std::string ns = nh.getNamespace();
+    if (!ns.empty() && ns[0] == '/') ns = ns.substr(1);  // Remove leading slash        
+    if (!ns.empty()) body_frame_id = ns + "/" + body_frame_id;
+
     nh.param<bool>("publish/path_en",path_en, true);
     nh.param<bool>("publish/scan_publish_en",scan_pub_en, true);
     nh.param<bool>("publish/dense_publish_en",dense_pub_en, true);
@@ -892,7 +898,7 @@ int main(int argc, char** argv)
                     sensor_msgs::PointCloud2 cloudMsg;
                     pcl::toROSMsg(*lidarInImuFrame, cloudMsg);
                     cloudMsg.header.stamp = ros::Time().fromSec(Measures.lidar_beg_time);
-                    cloudMsg.header.frame_id = "body";
+                    cloudMsg.header.frame_id = body_frame_id;
                     pubLaserCloudFull_body.publish(cloudMsg);
                 }
                 first_lidar_time = Measures.lidar_beg_time;
