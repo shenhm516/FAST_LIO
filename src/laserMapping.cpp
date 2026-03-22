@@ -59,6 +59,7 @@
 #include <livox_ros_driver/CustomMsg.h>
 #include "preprocess.h"
 #include <ikd-Tree/ikd_Tree.h>
+#include "relocalization.h"
 
 #define INIT_TIME           (0.1)
 #define LASER_POINT_COV     (0.001)
@@ -139,6 +140,8 @@ geometry_msgs::PoseStamped msg_body_pose;
 
 shared_ptr<Preprocess> p_pre(new Preprocess());
 shared_ptr<ImuProcess> p_imu(new ImuProcess());
+
+std::unique_ptr<ReLocalization> init_localization;
 
 void SigHandle(int sig)
 {
@@ -635,6 +638,14 @@ void publish_path(const ros::Publisher pubPath)
     }
 }
 
+void init_pose_callback(const geometry_msgs::PoseStamped::ConstPtr &msg) {
+    std::cout << "[Init Pose] Received initial pose: "
+              << "x=" << msg->pose.position.x
+              << ", y=" << msg->pose.position.y
+              << ", z=" << msg->pose.position.z << std::endl;
+    init_localization->GetInitialPose(msg);
+}
+
 void h_share_model(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_data)
 {
     double match_start = omp_get_wtime();
@@ -807,6 +818,7 @@ int main(int argc, char** argv)
     HALF_FOV_COS = cos((FOV_DEG) * 0.5 * PI_M / 180.0);
 
     _featsArray.reset(new PointCloudXYZI());
+    init_localization.reset(new ReLocalization());
 
     memset(point_selected_surf, true, sizeof(point_selected_surf));
     memset(res_last, -1000.0f, sizeof(res_last));
@@ -842,22 +854,16 @@ int main(int argc, char** argv)
         cout << "~~~~"<<ROOT_DIR<<" doesn't exist" << endl;
 
     /*** ROS subscribe initialization ***/
-    ros::Subscriber sub_pcl = p_pre->lidar_type == AVIA ? \
-        nh.subscribe(lid_topic, 200000, livox_pcl_cbk) : \
-        nh.subscribe(lid_topic, 200000, standard_pcl_cbk);
+    ros::Subscriber sub_pcl = p_pre->lidar_type == AVIA ? nh.subscribe(lid_topic, 200000, livox_pcl_cbk) : \
+                                                        nh.subscribe(lid_topic, 200000, standard_pcl_cbk);
     ros::Subscriber sub_imu = nh.subscribe(imu_topic, 200000, imu_cbk);
-    ros::Publisher pubLaserCloudFull = nh.advertise<sensor_msgs::PointCloud2>
-            ("/cloud_registered", 100000);
-    ros::Publisher pubLaserCloudFull_body = nh.advertise<sensor_msgs::PointCloud2>
-            ("/cloud_registered_body", 100000);
-    ros::Publisher pubLaserCloudEffect = nh.advertise<sensor_msgs::PointCloud2>
-            ("/cloud_effected", 100000);
-    ros::Publisher pubLaserCloudMap = nh.advertise<sensor_msgs::PointCloud2>
-            ("/Laser_map", 100000);
-    ros::Publisher pubOdomAftMapped = nh.advertise<nav_msgs::Odometry> 
-            ("/Odometry", 100000);
-    ros::Publisher pubPath          = nh.advertise<nav_msgs::Path> 
-            ("/path", 100000);
+    ros::Publisher pubLaserCloudFull = nh.advertise<sensor_msgs::PointCloud2> ("cloud_registered", 100000);            
+    ros::Publisher pubLaserCloudFull_body = nh.advertise<sensor_msgs::PointCloud2> ("cloud_registered_body", 100000);            
+    ros::Publisher pubLaserCloudEffect = nh.advertise<sensor_msgs::PointCloud2> ("cloud_effected", 100000);
+    ros::Publisher pubLaserCloudMap = nh.advertise<sensor_msgs::PointCloud2> ("Laser_map", 100000);            
+    ros::Publisher pubOdomAftMapped = nh.advertise<nav_msgs::Odometry> ("Odometry", 100000);
+    ros::Publisher pubPath = nh.advertise<nav_msgs::Path> ("path", 100000);
+    ros::Subscriber sub_init_pose = nh.subscribe<geometry_msgs::PoseStamped>("init_pose", 1, init_pose_callback);
 //------------------------------------------------------------------------------------------------------
     signal(SIGINT, SigHandle);
     ros::Rate rate(5000);
@@ -868,13 +874,35 @@ int main(int argc, char** argv)
         ros::spinOnce();
         if(sync_packages(Measures)) 
         {
-            if (flg_first_scan)
-            {
+            if (!init_localization->has_initial_pose_) {
+                // Publish raw lidar cloud projected to IMU frame
+                if (!Measures.lidar->empty()) {
+                    PointCloudXYZI::Ptr lidarInImuFrame(new PointCloudXYZI(Measures.lidar->size(), 1));
+                    for (size_t i = 0; i < Measures.lidar->size(); i++) {
+                        V3D p_lidar(Measures.lidar->points[i].x,
+                                    Measures.lidar->points[i].y,
+                                    Measures.lidar->points[i].z);
+                        V3D p_imu = Lidar_R_wrt_IMU * p_lidar + Lidar_T_wrt_IMU;
+
+                        lidarInImuFrame->points[i].x = p_imu(0);
+                        lidarInImuFrame->points[i].y = p_imu(1);
+                        lidarInImuFrame->points[i].z = p_imu(2);
+                        lidarInImuFrame->points[i].intensity = Measures.lidar->points[i].intensity;
+                    }
+                    sensor_msgs::PointCloud2 cloudMsg;
+                    pcl::toROSMsg(*lidarInImuFrame, cloudMsg);
+                    cloudMsg.header.stamp = ros::Time().fromSec(Measures.lidar_beg_time);
+                    cloudMsg.header.frame_id = "body";
+                    pubLaserCloudFull_body.publish(cloudMsg);
+                }
                 first_lidar_time = Measures.lidar_beg_time;
-                p_imu->first_lidar_time = first_lidar_time;
-                flg_first_scan = false;
+                // flg_first_scan = true;
                 continue;
             }
+            // if (flg_first_scan) {
+            //     first_lidar_time = Measures.lidar_beg_time;
+            //     flg_first_scan = false;
+            // }
 
             double t0,t1,t2,t3,t4,t5,match_start, solve_start, svd_time;
 
@@ -885,9 +913,17 @@ int main(int argc, char** argv)
             svd_time   = 0;
             t0 = omp_get_wtime();
 
-            p_imu->Process(Measures, kf, feats_undistort);
+            Eigen::Vector3d t(init_localization->initial_pose_(0,3), init_localization->initial_pose_(1,3), init_localization->initial_pose_(2,3));
+            Eigen::Matrix3d r;
+            r = init_localization->initial_pose_.block<3,3>(0,0).cast<double>();
+            p_imu->Process(Measures, kf, feats_undistort, t, r);
             state_point = kf.get_x();
             pos_lid = state_point.pos + state_point.rot * state_point.offset_T_L_I;
+
+            // Eigen::Quaternionf q(state_point.rot.coeffs()[3], state_point.rot.coeffs()[0], state_point.rot.coeffs()[1], state_point.rot.coeffs()[2]);
+            // Eigen::Matrix3f estimation_pose = q.normalized().toRotationMatrix();
+            // Eigen::Vector3f angle_p = estimation_pose.block<3,3>(0,0).eulerAngles(0,1,2)*(180.0 / M_PI);
+            // std::cout << state_point.pos.transpose() << " " << angle_p.transpose() << std::endl;
 
             if (feats_undistort->empty() || (feats_undistort == NULL))
             {

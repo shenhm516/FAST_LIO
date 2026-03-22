@@ -50,7 +50,8 @@ class ImuProcess
   void set_gyr_bias_cov(const V3D &b_g);
   void set_acc_bias_cov(const V3D &b_a);
   Eigen::Matrix<double, 12, 12> Q;
-  void Process(const MeasureGroup &meas,  esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state, PointCloudXYZI::Ptr pcl_un_);
+  void Process(const MeasureGroup &meas,  esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state, PointCloudXYZI::Ptr pcl_un_, 
+              const Eigen::Vector3d& t, const Eigen::Matrix3d& r);
 
   ofstream fout_imu;
   V3D cov_acc;
@@ -59,11 +60,11 @@ class ImuProcess
   V3D cov_gyr_scale;
   V3D cov_bias_gyr;
   V3D cov_bias_acc;
-  double first_lidar_time;
   int lidar_type;
 
  private:
-  void IMU_init(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state, int &N);
+  void IMU_init(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state, int &N,
+                const Eigen::Vector3d& init_t, const Eigen::Matrix3d& init_r);
   void UndistortPcl(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state, PointCloudXYZI &pcl_in_out);
 
   PointCloudXYZI::Ptr cur_pcl_un_;
@@ -156,7 +157,8 @@ void ImuProcess::set_acc_bias_cov(const V3D &b_a)
   cov_bias_acc = b_a;
 }
 
-void ImuProcess::IMU_init(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state, int &N)
+void ImuProcess::IMU_init(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state, int &N,
+                          const Eigen::Vector3d& init_t, const Eigen::Matrix3d& init_r)
 {
   /** 1. initializing the gravity, gyro bias, acc and gyro covariance
    ** 2. normalize the acceleration measurenments to unit gravity **/
@@ -172,7 +174,6 @@ void ImuProcess::IMU_init(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 
     const auto &gyr_acc = meas.imu.front()->angular_velocity;
     mean_acc << imu_acc.x, imu_acc.y, imu_acc.z;
     mean_gyr << gyr_acc.x, gyr_acc.y, gyr_acc.z;
-    first_lidar_time = meas.lidar_beg_time;
   }
 
   for (const auto &imu : meas.imu)
@@ -193,7 +194,9 @@ void ImuProcess::IMU_init(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 
     N ++;
   }
   state_ikfom init_state = kf_state.get_x();
-  init_state.grav = S2(- mean_acc / mean_acc.norm() * G_m_s2);
+  init_state.pos = init_t;
+  init_state.rot = SO3(init_r);
+  init_state.grav = S2(V3D(0.0, 0.0, -1.0) * G_m_s2);
   
   //state_inout.rot = Eye3d; // Exp(mean_acc.cross(V3D(0, 0, -1 / scale_gravity)));
   init_state.bg  = mean_gyr;
@@ -260,8 +263,6 @@ void ImuProcess::UndistortPcl(const MeasureGroup &meas, esekfom::esekf<state_ikf
     acc_avr   <<0.5 * (head->linear_acceleration.x + tail->linear_acceleration.x),
                 0.5 * (head->linear_acceleration.y + tail->linear_acceleration.y),
                 0.5 * (head->linear_acceleration.z + tail->linear_acceleration.z);
-
-    // fout_imu << setw(10) << head->header.stamp.toSec() - first_lidar_time << " " << angvel_avr.transpose() << " " << acc_avr.transpose() << endl;
 
     acc_avr     = acc_avr * G_m_s2 / mean_acc.norm(); // - state_inout.ba;
 
@@ -345,7 +346,8 @@ void ImuProcess::UndistortPcl(const MeasureGroup &meas, esekfom::esekf<state_ikf
   }
 }
 
-void ImuProcess::Process(const MeasureGroup &meas,  esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state, PointCloudXYZI::Ptr cur_pcl_un_)
+void ImuProcess::Process(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state, PointCloudXYZI::Ptr cur_pcl_un_,
+                         const Eigen::Vector3d& t, const Eigen::Matrix3d& r)
 {
   double t1,t2,t3;
   t1 = omp_get_wtime();
@@ -356,7 +358,7 @@ void ImuProcess::Process(const MeasureGroup &meas,  esekfom::esekf<state_ikfom, 
   if (imu_need_init_)
   {
     /// The very first lidar frame
-    IMU_init(meas, kf_state, init_iter_num);
+    IMU_init(meas, kf_state, init_iter_num, t, r);
 
     imu_need_init_ = true;
     
