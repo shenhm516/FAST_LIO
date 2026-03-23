@@ -143,6 +143,7 @@ shared_ptr<Preprocess> p_pre(new Preprocess());
 shared_ptr<ImuProcess> p_imu(new ImuProcess());
 
 std::unique_ptr<ReLocalization> init_localization;
+bool use_pre_map = false;
 
 void SigHandle(int sig)
 {
@@ -808,6 +809,9 @@ int main(int argc, char** argv)
     nh.param<int>("pcd_save/interval", pcd_save_interval, -1);
     nh.param<vector<double>>("mapping/extrinsic_T", extrinT, vector<double>());
     nh.param<vector<double>>("mapping/extrinsic_R", extrinR, vector<double>());
+    nh.param<bool>("mapping/use_pre_map", use_pre_map, false);
+    std::string map_path;
+    nh.param<string>("mapping/map_path", map_path, "");
 
     p_pre->lidar_type = lidar_type;
     cout<<"p_pre->lidar_type "<<p_pre->lidar_type<<endl;
@@ -871,6 +875,12 @@ int main(int argc, char** argv)
     ros::Publisher pubPath = nh.advertise<nav_msgs::Path> ("path", 100000);
     ros::Subscriber sub_init_pose = nh.subscribe<geometry_msgs::PoseStamped>("init_pose", 1, init_pose_callback);
 //------------------------------------------------------------------------------------------------------
+    pcl::PointCloud<pcl::PointXYZINormal> map_pt;    
+    if (use_pre_map) {
+        bool map_flag = init_localization->LoadMap(map_path, map_pt);   
+        if (!map_flag) use_pre_map = false;
+    }
+
     signal(SIGINT, SigHandle);
     ros::Rate rate(5000);
     bool status = ros::ok();
@@ -948,16 +958,15 @@ int main(int argc, char** argv)
             t1 = omp_get_wtime();
             feats_down_size = feats_down_body->points.size();
             /*** initialize the map kdtree ***/
-            if(ikdtree.Root_Node == nullptr)
-            {
-                if(feats_down_size > 5)
-                {
+            if(ikdtree.Root_Node == nullptr) {
+                if (use_pre_map) {
+                    ikdtree.set_downsample_param(filter_size_map_min);
+                    ikdtree.Build(map_pt.points);
+                } else if (feats_down_size > 5) {
                     ikdtree.set_downsample_param(filter_size_map_min);
                     feats_down_world->resize(feats_down_size);
                     for(int i = 0; i < feats_down_size; i++)
-                    {
                         pointBodyToWorld(&(feats_down_body->points[i]), &(feats_down_world->points[i]));
-                    }
                     ikdtree.Build(feats_down_world->points);
                 }
                 continue;
@@ -1015,7 +1024,7 @@ int main(int argc, char** argv)
 
             /*** add the feature points to map kdtree ***/
             t3 = omp_get_wtime();
-            map_incremental();
+            if (!use_pre_map) map_incremental();
             t5 = omp_get_wtime();
             
             /******* Publish points *******/
