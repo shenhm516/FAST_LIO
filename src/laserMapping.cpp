@@ -890,35 +890,35 @@ int main(int argc, char** argv)
         ros::spinOnce();
         if(sync_packages(Measures)) 
         {
-            if (!init_localization->has_initial_pose_) {
-                // Publish raw lidar cloud projected to IMU frame
-                if (!Measures.lidar->empty()) {
-                    PointCloudXYZI::Ptr lidarInImuFrame(new PointCloudXYZI(Measures.lidar->size(), 1));
-                    for (size_t i = 0; i < Measures.lidar->size(); i++) {
-                        V3D p_lidar(Measures.lidar->points[i].x,
-                                    Measures.lidar->points[i].y,
-                                    Measures.lidar->points[i].z);
-                        V3D p_imu = Lidar_R_wrt_IMU * p_lidar + Lidar_T_wrt_IMU;
+            // if (!init_localization->has_initial_pose_) {
+            //     // Publish raw lidar cloud projected to IMU frame
+            //     if (!Measures.lidar->empty()) {
+            //         PointCloudXYZI::Ptr lidarInImuFrame(new PointCloudXYZI(Measures.lidar->size(), 1));
+            //         for (size_t i = 0; i < Measures.lidar->size(); i++) {
+            //             V3D p_lidar(Measures.lidar->points[i].x,
+            //                         Measures.lidar->points[i].y,
+            //                         Measures.lidar->points[i].z);
+            //             V3D p_imu = Lidar_R_wrt_IMU * p_lidar + Lidar_T_wrt_IMU;
 
-                        lidarInImuFrame->points[i].x = p_imu(0);
-                        lidarInImuFrame->points[i].y = p_imu(1);
-                        lidarInImuFrame->points[i].z = p_imu(2);
-                        lidarInImuFrame->points[i].intensity = Measures.lidar->points[i].intensity;
-                    }
-                    sensor_msgs::PointCloud2 cloudMsg;
-                    pcl::toROSMsg(*lidarInImuFrame, cloudMsg);
-                    cloudMsg.header.stamp = ros::Time().fromSec(Measures.lidar_beg_time);
-                    cloudMsg.header.frame_id = body_frame_id;
-                    pubLaserCloudFull_body.publish(cloudMsg);
-                }
-                first_lidar_time = Measures.lidar_beg_time;
-                // flg_first_scan = true;
-                continue;
-            }
-            // if (flg_first_scan) {
+            //             lidarInImuFrame->points[i].x = p_imu(0);
+            //             lidarInImuFrame->points[i].y = p_imu(1);
+            //             lidarInImuFrame->points[i].z = p_imu(2);
+            //             lidarInImuFrame->points[i].intensity = Measures.lidar->points[i].intensity;
+            //         }
+            //         sensor_msgs::PointCloud2 cloudMsg;
+            //         pcl::toROSMsg(*lidarInImuFrame, cloudMsg);
+            //         cloudMsg.header.stamp = ros::Time().fromSec(Measures.lidar_beg_time);
+            //         cloudMsg.header.frame_id = body_frame_id;
+            //         pubLaserCloudFull_body.publish(cloudMsg);
+            //     }
             //     first_lidar_time = Measures.lidar_beg_time;
-            //     flg_first_scan = false;
+            //     // flg_first_scan = true;
+            //     continue;
             // }
+            if (flg_first_scan) {
+                first_lidar_time = Measures.lidar_beg_time;
+                flg_first_scan = false;
+            }
 
             double t0,t1,t2,t3,t4,t5,match_start, solve_start, svd_time;
 

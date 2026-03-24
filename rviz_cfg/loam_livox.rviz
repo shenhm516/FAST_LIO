@@ -25,6 +25,7 @@ Panels:
         - /Odometry5
         - /Path3
         - /Odometry6
+        - /PointCloud23
       Splitter Ratio: 0.6432291865348816
     Tree Height: 777
   - Class: rviz/Selection
@@ -528,6 +529,34 @@ Visualization Manager:
       Topic: /uav3/Odometry
       Unreliable: false
       Value: true
+    - Alpha: 1
+      Autocompute Intensity Bounds: true
+      Autocompute Value Bounds:
+        Max Value: 0
+        Min Value: -2.5399999618530273
+        Value: true
+      Axis: Z
+      Channel Name: intensity
+      Class: rviz/PointCloud2
+      Color: 255; 255; 255
+      Color Transformer: AxisColor
+      Decay Time: 0
+      Enabled: true
+      Invert Rainbow: true
+      Max Color: 255; 255; 255
+      Min Color: 0; 0; 0
+      Name: PointCloud2
+      Position Transformer: XYZ
+      Queue Size: 10
+      Selectable: true
+      Size (Pixels): 3
+      Size (m): 0.009999999776482582
+      Style: Points
+      Topic: /uav1/cloud_house
+      Unreliable: false
+      Use Fixed Frame: true
+      Use rainbow: true
+      Value: true
   Enabled: true
   Global Options:
     Background Color: 255; 255; 255
@@ -555,7 +584,7 @@ Visualization Manager:
   Value: true
   Views:
     Current:
-      Angle: 0
+      Angle: -0.04500013589859009
       Class: rviz/TopDownOrtho
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
@@ -565,10 +594,10 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Scale: 41.175331115722656
+      Scale: 38.29487228393555
       Target Frame: global
-      X: 4.774586200714111
-      Y: 1.0961238145828247
+      X: 14.05197811126709
+      Y: 1.3389877080917358
     Saved: ~
 Window Geometry:
   Displays:
