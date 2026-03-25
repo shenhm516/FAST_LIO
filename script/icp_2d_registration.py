@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-2D Point Cloud Registration ROS Node using Open3D ICP Algorithm
+2D Point Cloud Registration ROS Node using ICP Algorithm
 """
 
 import numpy as np
@@ -13,10 +13,11 @@ from collections import deque
 from typing import Tuple, Optional
 import os
 import open3d as o3d
+from scipy.spatial import KDTree
 from scipy.spatial.transform import Rotation
 
 
-def icp_2d_open3d(
+def icp_2d(
     source: np.ndarray,
     target: np.ndarray,
     max_iterations: int = 100,
@@ -28,13 +29,13 @@ def icp_2d_open3d(
     verbose: bool = True
 ) -> Tuple[np.ndarray, float]:
     """
-    使用Open3D进行2D点云配准
+    手写2D ICP点云配准算法
 
     Args:
         source: 源点云 (N, 2)
         target: 目标点云 (M, 2)
         max_iterations: 最大迭代次数
-        tolerance: 收敛阈值（相对 fitness）
+        tolerance: 收敛阈值
         max_distance: 最近邻搜索的最大距离
         init_x: 初始x平移
         init_y: 初始y平移
@@ -43,54 +44,104 @@ def icp_2d_open3d(
 
     Returns:
         transformation: 4x4变换矩阵
-        inlier_rmse: 最终误差
+        final_error: 最终误差
     """
-    # 将2D点云扩展为3D (z=0)
-    source_3d = np.column_stack([source, np.zeros(len(source))])
-    target_3d = np.column_stack([target, np.zeros(len(target))])
+    # 构建初始变换
+    R_init = Rotation.from_euler('z', init_yaw).as_matrix()
+    t_init = np.array([init_x, init_y])
 
-    # 创建Open3D点云对象
-    source_pcd = o3d.geometry.PointCloud()
-    source_pcd.points = o3d.utility.Vector3dVector(source_3d)
+    # 应用初始变换到源点云
+    current_source = (R_init[:2,:2] @ source.T).T + t_init
 
-    target_pcd = o3d.geometry.PointCloud()
-    target_pcd.points = o3d.utility.Vector3dVector(target_3d)
+    # 累积变换
+    R_total = R_init[:2,:2]
+    t_total = t_init.copy()
 
-    # 构建初始变换矩阵 (4x4)
-    rotation = Rotation.from_euler('zyx', [init_yaw, 0, 0])
-    rotation_matrix = rotation.as_matrix()
-    init_transformation = np.eye(4)
-    init_transformation[:3, :3] = rotation_matrix
-    init_transformation[0, 3] = init_x
-    init_transformation[1, 3] = init_y
+    # 构建目标点云的KDTree
+    target_tree = KDTree(target)
+
+    prev_error = float('inf')
 
     if verbose:
         rospy.loginfo(f"Initial pose: x={init_x:.4f}, y={init_y:.4f}, yaw={np.degrees(init_yaw):.2f}°")
-        rospy.loginfo("Running Open3D Point-to-Point ICP...")
+        rospy.loginfo("Running 2D ICP...")
 
-    reg_p2p = o3d.pipelines.registration.registration_icp(
-        source_pcd, target_pcd, max_distance, init_transformation,
-        o3d.pipelines.registration.TransformationEstimationPointToPoint(),
-        o3d.pipelines.registration.ICPConvergenceCriteria(
-            max_iteration=max_iterations,
-            relative_fitness=tolerance,
-            relative_rmse=tolerance
-        )
-    )
+    for iteration in range(max_iterations):
+        # 1. 找最近点对应
+        distances, indices = target_tree.query(current_source)
 
-    transformation = reg_p2p.transformation
-    inlier_rmse = reg_p2p.inlier_rmse
+        # 过滤距离过大的点
+        valid_mask = distances < max_distance
+        if np.sum(valid_mask) < 3:
+            if verbose:
+                rospy.loginfo(f"Iter {iteration}: too few correspondences ({np.sum(valid_mask)}), stop")
+            break
+
+        source_matched = current_source[valid_mask]
+        target_matched = target[indices[valid_mask]]
+
+        # 2. 计算当前误差
+        error = np.sqrt(np.mean(distances[valid_mask] ** 2))
+
+        # 3. 检查收敛
+        if abs(prev_error - error) < tolerance:
+            if verbose:
+                rospy.loginfo(f"Iter {iteration}: converged, error={error:.6f}")
+            break
+        prev_error = error
+
+        # 4. SVD计算最优变换
+        # 计算质心
+        centroid_s = np.mean(source_matched, axis=0)
+        centroid_t = np.mean(target_matched, axis=0)
+
+        # 去中心化
+        source_centered = source_matched - centroid_s
+        target_centered = target_matched - centroid_t
+
+        # 计算协方差矩阵
+        H = source_centered.T @ target_centered
+
+        # SVD分解
+        U, _, Vt = np.linalg.svd(H)
+        R_delta = Vt.T @ U.T
+
+        # 确保是纯旋转（行列式为1）
+        if np.linalg.det(R_delta) < 0:
+            Vt[1, :] *= -1
+            R_delta = Vt.T @ U.T
+
+        # 计算平移
+        t_delta = centroid_t - R_delta @ centroid_s
+
+        # 5. 更新变换
+        current_source = (R_delta @ current_source.T).T + t_delta
+
+        # 累积变换: T_new = T_delta * T_old
+        R_total = R_delta @ R_total
+        t_total = R_delta @ t_total + t_delta
+
+        if verbose and iteration % 10 == 0:
+            yaw_total = np.arctan2(R_total[1, 0], R_total[0, 0])
+            rospy.loginfo(f"Iter {iteration}: error={error:.6f}, yaw={np.degrees(yaw_total):.2f}°, "
+                          f"t=[{t_total[0]:.4f}, {t_total[1]:.4f}]")
+
+    # 构建4x4变换矩阵
+    transformation = np.eye(4)
+    transformation[:2, :2] = R_total
+    transformation[:2, 3] = t_total
+
+    # 计算最终误差
+    distances, _ = target_tree.query(current_source)
+    final_error = np.sqrt(np.mean(distances ** 2))
 
     if verbose:
-        # 提取旋转和平移用于打印
-        rotation_matrix_2d = transformation[:2, :2]
-        yaw = np.arctan2(rotation_matrix_2d[1, 0], rotation_matrix_2d[0, 0])
-        translation = transformation[:2, 3]
-        rospy.loginfo(f"ICP completed: fitness={reg_p2p.fitness:.6f}, inlier_rmse={inlier_rmse:.6f}")
-        rospy.loginfo(f"  Rotation: {np.degrees(yaw):.2f}°")
-        rospy.loginfo(f"  Translation: [{translation[0]:.4f}, {translation[1]:.4f}]")
+        yaw_final = np.arctan2(R_total[1, 0], R_total[0, 0])
+        rospy.loginfo(f"ICP completed: final_error={final_error:.6f}")
+        rospy.loginfo(f"  Yaw: {np.degrees(yaw_final):.2f}°")
+        rospy.loginfo(f"  Translation: [{t_total[0]:.4f}, {t_total[1]:.4f}]")
 
-    return transformation, inlier_rmse
+    return transformation, final_error
 
 
 def extract_2d_slice(
@@ -185,10 +236,10 @@ class ICP2DRegistrationNode:
         # 参数
         self.z_center = rospy.get_param('~z_center', 1.5)
         self.z_tolerance = rospy.get_param('~z_tolerance', 0.1)
-        self.max_points = rospy.get_param('~max_points', 5000)
+        self.max_points = rospy.get_param('~max_points', None)
         self.max_iterations = rospy.get_param('~max_iterations', 100)
-        self.tolerance = rospy.get_param('~tolerance', 1e-6)
-        self.max_distance = rospy.get_param('~max_distance', 0.3)
+        # self.tolerance = rospy.get_param('~tolerance', 1e-6)
+        self.max_distance = rospy.get_param('~max_distance', 0.5)
 
         # 滑窗参数
         self.window_size = rospy.get_param('~window_size', 10)
@@ -278,11 +329,11 @@ class ICP2DRegistrationNode:
         rospy.loginfo(f"Combined target cloud: {len(target_cloud)} points from {len(self.cloud_window)} frames")
 
         rospy.loginfo("Starting ICP registration...")
-        transformation, final_error = icp_2d_open3d(
+        transformation, final_error = icp_2d(
             self.source_cloud_2d,
             target_cloud,
             max_iterations=self.max_iterations,
-            tolerance=self.tolerance,
+            tolerance=1e-6,
             max_distance=self.max_distance,
             init_x=self.init_x,
             init_y=self.init_y,

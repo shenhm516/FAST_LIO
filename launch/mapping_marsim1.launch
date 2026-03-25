@@ -18,11 +18,13 @@
 	<node pkg="fast_lio" type="icp_2d_registration.py" name="icp_2d_registration" output="screen">
 		<param name="z_center" value="1.5" />
 		<param name="z_tolerance" value="0.1" />
-		<param name="max_points" value="5000" />
+		<!-- <param name="max_points" value="5000" /> -->
 		<param name="window_size" value="10" />
 		<param name="init_x" value="11.5" />
 		<param name="init_y" value="4.5" />
 		<param name="init_yaw" value="0.2" />
+		<param name="max_distance" value="0.3" />
+		
 	</node>
 
 	<group if="$(arg rviz)">
