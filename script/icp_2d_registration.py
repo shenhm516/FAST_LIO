@@ -179,7 +179,7 @@ class ICP2DRegistrationNode:
         self.subscriber = rospy.Subscriber('cloud_registered', PointCloud2, self.cloud_callback, queue_size=1)
 
         # 发布变换后的点云
-        self.transformed_cloud_pub = rospy.Publisher('/cloud_house', PointCloud2, queue_size=1)
+        self.transformed_cloud_pub = rospy.Publisher('cloud_house', PointCloud2, queue_size=1)
 
         # rospy.loginfo(f"ICP 2D Registration Node initialized")
         # rospy.loginfo(f"z_center: {self.z_center}m, z_tolerance: {self.z_tolerance}m")
