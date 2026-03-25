@@ -19,12 +19,20 @@
 		<param name="z_center" value="1.5" />
 		<param name="z_tolerance" value="0.1" />
 		<!-- <param name="max_points" value="5000" /> -->
-		<param name="window_size" value="10" />
-		<param name="init_x" value="11.0" />
-		<param name="init_y" value="4.0" />
-		<param name="init_yaw" value="0" />
-		<param name="max_distance" value="0.3" />
-		
+		<param name="window_size" value="30" />
+		<!-- <rosparam param="init_x">[11.0, 17.0, 11.0]</rosparam>
+		<rosparam param="init_y">[4.0, 2.0, -3.5]</rosparam>
+		<rosparam param="init_yaw">[0, -1.57, 1.57]</rosparam> -->
+		<rosparam param="init_x">[11.0, 17.5, 11.0]</rosparam>
+		<rosparam param="init_y">[4.0, 2.0, -3.5]</rosparam>
+		<rosparam param="init_yaw">[0.2, -1.77, 2.94]</rosparam>
+		<!-- <rosparam param="init_x">[11.0, 11.0]</rosparam>
+		<rosparam param="init_y">[4.0, -3.5]</rosparam>
+		<rosparam param="init_yaw">[0, 3.14]</rosparam> -->
+		<param name="max_distance" value="0.5" />
+		<rosparam param="pcd_path">["/mnt/nas/dataset/rosbag/UniLPR/AEROMAZE/house1.pcd", "/mnt/nas/dataset/rosbag/UniLPR/AEROMAZE/house2.pcd", "/mnt/nas/dataset/rosbag/UniLPR/AEROMAZE/house1.pcd"]</rosparam>
+		<!-- <rosparam param="pcd_path">["/mnt/nas/dataset/rosbag/UniLPR/AEROMAZE/house1.pcd", "/mnt/nas/dataset/rosbag/UniLPR/AEROMAZE/house2.pcd"]</rosparam> -->
+		<!-- <rosparam param="pcd_path">["/mnt/nas/dataset/rosbag/UniLPR/AEROMAZE/house1.pcd", "/mnt/nas/dataset/rosbag/UniLPR/AEROMAZE/house1.pcd"]</rosparam> -->
 	</node>
 
 	<group if="$(arg rviz)">

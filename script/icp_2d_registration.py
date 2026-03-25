@@ -119,29 +119,30 @@ class ICP2DRegistrationNode:
         self.cloud_window = deque(maxlen=self.window_size)  # 存储最近的N帧2D点云
 
         # 初值参数
-        self.init_x = rospy.get_param('~init_x', 0.0)
-        self.init_y = rospy.get_param('~init_y', 0.0)
-        self.init_yaw = rospy.get_param('~init_yaw', 0.0)  # 弧度
+        self.init_x = rospy.get_param('~init_x', [])
+        self.init_y = rospy.get_param('~init_y', [])
+        self.init_yaw = rospy.get_param('~init_yaw', [])        
 
         # 读取PCD文件作为源点云
         self.source_cloud_2d = None
         self.source_cloud_3d = None
-        pcd_path = rospy.get_param('~pcd_path', '/mnt/nas/dataset/rosbag/UniLPR/AEROMAZE/house1.pcd')
-        if os.path.exists(pcd_path):
-            rospy.loginfo(f"Loading PCD file: {pcd_path}")
-            pcd = o3d.io.read_point_cloud(pcd_path)
+        pcd_path = rospy.get_param('~pcd_path', [])
+        self.finish_flag = [False] * len(pcd_path)
+
+        self.source_cloud_3d = []
+        self.source_cloud_2d = []
+        for i in range(len(pcd_path)):
+            pcd = o3d.io.read_point_cloud(pcd_path[i])
             points_3d = np.asarray(pcd.points)
-            rospy.loginfo(f"Loaded {len(points_3d)} points from PCD")
-            self.source_cloud_3d = points_3d
-            self.source_cloud_2d = extract_2d_slice(
+            self.source_cloud_3d.append(points_3d)
+            self.source_cloud_2d.append(extract_2d_slice(
                 points_3d,
                 z_center=self.z_center,
                 z_tolerance=self.z_tolerance,
                 max_points=self.max_points
-            )
-            rospy.loginfo(f"Source cloud loaded: {len(self.source_cloud_2d)} 2D points for ICP, {len(self.source_cloud_3d)} 3D points for output")
-        else:
-            rospy.logwarn(f"PCD file not found: {pcd_path}")
+            ))
+        #     print(self.source_cloud_2d[i].shape)
+        # exit()
 
         # 订阅点云话题
         self.subscriber = rospy.Subscriber('cloud_registered', PointCloud2, self.cloud_callback, queue_size=1)
@@ -149,10 +150,10 @@ class ICP2DRegistrationNode:
         # 发布变换后的点云
         self.transformed_cloud_pub = rospy.Publisher('cloud_house', PointCloud2, queue_size=1)
 
-        rospy.loginfo(f"ICP 2D Registration Node initialized")
-        rospy.loginfo(f"z_center: {self.z_center}m, z_tolerance: {self.z_tolerance}m")
-        rospy.loginfo(f"Sliding window size: {self.window_size}")
-        rospy.loginfo(f"Initial pose: x={self.init_x}, y={self.init_y}, yaw={np.degrees(self.init_yaw):.2f}°")
+        # rospy.loginfo(f"ICP 2D Registration Node initialized")
+        # rospy.loginfo(f"z_center: {self.z_center}m, z_tolerance: {self.z_tolerance}m")
+        # rospy.loginfo(f"Sliding window size: {self.window_size}")
+        # rospy.loginfo(f"Initial pose: x={self.init_x}, y={self.init_y}, yaw={np.degrees(self.init_yaw):.2f}°")
 
     def cloud_callback(self, msg: PointCloud2):
         """
@@ -161,7 +162,7 @@ class ICP2DRegistrationNode:
         Args:
             msg: PointCloud2消息
         """
-        rospy.loginfo(f"Received point cloud with {msg.width * msg.height} points")
+        if all(self.finish_flag): return
 
         # 将PointCloud2转换为numpy数组
         points_3d = []
@@ -173,7 +174,7 @@ class ICP2DRegistrationNode:
             return
 
         points_3d = np.array(points_3d)
-        rospy.loginfo(f"Converted to numpy array: {points_3d.shape}")
+        # rospy.loginfo(f"Converted to numpy array: {points_3d.shape}")
 
         # 提取2D点云
         points_2d = extract_2d_slice(
@@ -182,7 +183,7 @@ class ICP2DRegistrationNode:
             z_tolerance=self.z_tolerance,
             max_points=self.max_points
         )
-        rospy.loginfo(f"Extracted 2D slice: {len(points_2d)} points (z: {self.z_center}±{self.z_tolerance}m)")
+        # rospy.loginfo(f"Extracted 2D slice: {len(points_2d)} points (z: {self.z_center}±{self.z_tolerance}m)")
 
         if len(points_2d) < 10:
             rospy.logwarn("Too few points in 2D slice, skipping...")
@@ -190,7 +191,7 @@ class ICP2DRegistrationNode:
 
         # 将当前帧加入滑窗
         self.cloud_window.append(points_2d)
-        rospy.loginfo(f"Added to sliding window, current size: {len(self.cloud_window)}/{self.window_size}")
+        # rospy.loginfo(f"Added to sliding window, current size: {len(self.cloud_window)}/{self.window_size}")
 
         # 如果滑窗未满，等待更多帧
         if len(self.cloud_window) < self.window_size:
@@ -199,33 +200,56 @@ class ICP2DRegistrationNode:
 
         # 合并滑窗中的所有点云作为目标点云
         target_cloud = np.vstack(list(self.cloud_window))
-        rospy.loginfo(f"Combined target cloud: {len(target_cloud)} points from {len(self.cloud_window)} frames")
+        # rospy.loginfo(f"Combined target cloud: {len(target_cloud)} points from {len(self.cloud_window)} frames")
 
         rospy.loginfo("Starting ICP registration...")
-        for iter in range(3):
-            max_distance = max(self.max_distance / (iter + 1), 0.1)
-            transformation, score = self.icp_2d(
-                self.source_cloud_2d,
-                target_cloud,
-                max_iterations=self.max_iterations,
-                tolerance=1e-6,
-                max_distance=max_distance,
-                init_x=self.init_x,
-                init_y=self.init_y,
-                init_yaw=self.init_yaw,
-                verbose=True
-            )
-            self.init_x = transformation[0,3]
-            self.init_y = transformation[1,3]
-            self.init_yaw, _, _ = Rotation.from_matrix(transformation[:3, :3]).as_euler('zyx')
-            if max_distance == 0.1: break
+        for house_id in range(len(self.source_cloud_2d)):
+            if self.finish_flag[house_id] == True: continue
+            for iter in range(3):
+                max_distance = max(self.max_distance / (iter + 1), 0.1)
+                # for house_id in range(len(self.source_cloud_2d)):
+                if iter == 0: 
+                    init_x = self.init_x[house_id]
+                    init_y = self.init_y[house_id]
+                    init_yaw = self.init_yaw[house_id]
+                transformation, score = self.icp_2d(
+                    self.source_cloud_2d[house_id],
+                    target_cloud,
+                    max_iterations=self.max_iterations,
+                    tolerance=1e-6,
+                    max_distance=max_distance,
+                    init_x=init_x,
+                    init_y=init_y,
+                    init_yaw=init_yaw,
+                    verbose=False
+                )
+                init_x = transformation[0,3]
+                init_y = transformation[1,3]
+                init_yaw, _, _ = Rotation.from_matrix(transformation[:3, :3]).as_euler('zyx')
+                if max_distance == 0.1: break
 
-
-        # 对source_cloud_3d进行变换并发布
-        source_transformed = transform_3d_points(self.source_cloud_3d, transformation)
-        cloud_msg = create_point_cloud_msg(source_transformed, frame_id="camera_init")
-        self.transformed_cloud_pub.publish(cloud_msg)
-        rospy.loginfo(f"Published transformed source cloud: {len(source_transformed)} points, Score: {score['score']}")
+            
+            
+            transformation_init = np.eye(4)
+            transformation_init[:3, :3] = Rotation.from_euler('z', self.init_yaw[house_id]).as_matrix()
+            transformation_init[0, 3] = self.init_x[house_id]
+            transformation_init[1, 3] = self.init_y[house_id]
+            transformation_error = np.linalg.inv(transformation)@transformation_init
+            angle_error = np.linalg.norm(Rotation.from_matrix(transformation_error[:3,:3]).as_rotvec())
+            t_error = np.linalg.norm(transformation_error[:2,3])
+            # print(self.house_id, score['score'], score['inlier_rmse'], score['inlier_count'], t_error, angle_error)
+            if (score['score']>0.3 or score['inlier_count']>500) and score['inlier_rmse'] < 0.2 and t_error < 1.5 and angle_error<np.deg2rad(15.0):
+                # transformation = np.eye(4)
+                # transformation[:3, :3] = Rotation.from_euler('z', self.init_yaw[self.house_id]).as_matrix()
+                # transformation[0, 3] = self.init_x[self.house_id]
+                # transformation[1, 3] = self.init_y[self.house_id]
+                source_transformed = transform_3d_points(self.source_cloud_3d[house_id], transformation)
+                cloud_msg = create_point_cloud_msg(source_transformed, frame_id=str(house_id)) #str(house_id) camera_init
+                self.transformed_cloud_pub.publish(cloud_msg)
+                self.finish_flag[house_id] = True
+                # self.house_id += 1
+                # if self.house_id >= len(self.source_cloud_2d): self.finish_flag = True
+                # rospy.loginfo(f"Published transformed source cloud: {len(source_transformed)} points, Score: {score['score']}")
 
     def icp_2d(self,
         source: np.ndarray,
@@ -347,6 +371,7 @@ class ICP2DRegistrationNode:
             rospy.loginfo(f"  Translation: [{t_total[0]:.4f}, {t_total[1]:.4f}]")
 
         return transformation, score
+    
 if __name__ == "__main__":
     node = ICP2DRegistrationNode()
     rospy.spin()
