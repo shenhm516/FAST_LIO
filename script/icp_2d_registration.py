@@ -17,133 +17,6 @@ from scipy.spatial import KDTree
 from scipy.spatial.transform import Rotation
 
 
-def icp_2d(
-    source: np.ndarray,
-    target: np.ndarray,
-    max_iterations: int = 100,
-    tolerance: float = 1e-6,
-    max_distance: float = 0.5,
-    init_x: float = 0.0,
-    init_y: float = 0.0,
-    init_yaw: float = 0.0,
-    verbose: bool = True
-) -> Tuple[np.ndarray, float]:
-    """
-    手写2D ICP点云配准算法
-
-    Args:
-        source: 源点云 (N, 2)
-        target: 目标点云 (M, 2)
-        max_iterations: 最大迭代次数
-        tolerance: 收敛阈值
-        max_distance: 最近邻搜索的最大距离
-        init_x: 初始x平移
-        init_y: 初始y平移
-        init_yaw: 初始yaw角度（弧度）
-        verbose: 是否打印迭代信息
-
-    Returns:
-        transformation: 4x4变换矩阵
-        final_error: 最终误差
-    """
-    # 构建初始变换
-    R_init = Rotation.from_euler('z', init_yaw).as_matrix()
-    t_init = np.array([init_x, init_y])
-
-    # 应用初始变换到源点云
-    current_source = (R_init[:2,:2] @ source.T).T + t_init
-
-    # 累积变换
-    R_total = R_init[:2,:2]
-    t_total = t_init.copy()
-
-    # 构建目标点云的KDTree
-    target_tree = KDTree(target)
-
-    prev_error = float('inf')
-
-    if verbose:
-        rospy.loginfo(f"Initial pose: x={init_x:.4f}, y={init_y:.4f}, yaw={np.degrees(init_yaw):.2f}°")
-        rospy.loginfo("Running 2D ICP...")
-
-    for iteration in range(max_iterations):
-        # 1. 找最近点对应
-        distances, indices = target_tree.query(current_source)
-
-        # 过滤距离过大的点
-        valid_mask = distances < max_distance
-        if np.sum(valid_mask) < 3:
-            if verbose:
-                rospy.loginfo(f"Iter {iteration}: too few correspondences ({np.sum(valid_mask)}), stop")
-            break
-
-        source_matched = current_source[valid_mask]
-        target_matched = target[indices[valid_mask]]
-
-        # 2. 计算当前误差
-        error = np.sqrt(np.mean(distances[valid_mask] ** 2))
-
-        # 3. 检查收敛
-        if abs(prev_error - error) < tolerance:
-            if verbose:
-                rospy.loginfo(f"Iter {iteration}: converged, error={error:.6f}")
-            break
-        prev_error = error
-
-        # 4. SVD计算最优变换
-        # 计算质心
-        centroid_s = np.mean(source_matched, axis=0)
-        centroid_t = np.mean(target_matched, axis=0)
-
-        # 去中心化
-        source_centered = source_matched - centroid_s
-        target_centered = target_matched - centroid_t
-
-        # 计算协方差矩阵
-        H = source_centered.T @ target_centered
-
-        # SVD分解
-        U, _, Vt = np.linalg.svd(H)
-        R_delta = Vt.T @ U.T
-
-        # 确保是纯旋转（行列式为1）
-        if np.linalg.det(R_delta) < 0:
-            Vt[1, :] *= -1
-            R_delta = Vt.T @ U.T
-
-        # 计算平移
-        t_delta = centroid_t - R_delta @ centroid_s
-
-        # 5. 更新变换
-        current_source = (R_delta @ current_source.T).T + t_delta
-
-        # 累积变换: T_new = T_delta * T_old
-        R_total = R_delta @ R_total
-        t_total = R_delta @ t_total + t_delta
-
-        if verbose and iteration % 10 == 0:
-            yaw_total = np.arctan2(R_total[1, 0], R_total[0, 0])
-            rospy.loginfo(f"Iter {iteration}: error={error:.6f}, yaw={np.degrees(yaw_total):.2f}°, "
-                          f"t=[{t_total[0]:.4f}, {t_total[1]:.4f}]")
-
-    # 构建4x4变换矩阵
-    transformation = np.eye(4)
-    transformation[:2, :2] = R_total
-    transformation[:2, 3] = t_total
-
-    # 计算最终误差
-    distances, _ = target_tree.query(current_source)
-    final_error = np.sqrt(np.mean(distances ** 2))
-
-    if verbose:
-        yaw_final = np.arctan2(R_total[1, 0], R_total[0, 0])
-        rospy.loginfo(f"ICP completed: final_error={final_error:.6f}")
-        rospy.loginfo(f"  Yaw: {np.degrees(yaw_final):.2f}°")
-        rospy.loginfo(f"  Translation: [{t_total[0]:.4f}, {t_total[1]:.4f}]")
-
-    return transformation, final_error
-
-
 def extract_2d_slice(
     points_3d: np.ndarray,
     z_center: float = 1.5,
@@ -329,28 +202,151 @@ class ICP2DRegistrationNode:
         rospy.loginfo(f"Combined target cloud: {len(target_cloud)} points from {len(self.cloud_window)} frames")
 
         rospy.loginfo("Starting ICP registration...")
-        transformation, final_error = icp_2d(
-            self.source_cloud_2d,
-            target_cloud,
-            max_iterations=self.max_iterations,
-            tolerance=1e-6,
-            max_distance=self.max_distance,
-            init_x=self.init_x,
-            init_y=self.init_y,
-            init_yaw=self.init_yaw,
-            verbose=True
-        )
-        # transformation1 = np.copy(transformation)
-        # transformation1[:3, :3] = np.eye(3)
-        # transformation1[0, 3] = 14
-        # transformation1[1, 3] = 4
+        for iter in range(3):
+            max_distance = max(self.max_distance / (iter + 1), 0.1)
+            transformation, score = self.icp_2d(
+                self.source_cloud_2d,
+                target_cloud,
+                max_iterations=self.max_iterations,
+                tolerance=1e-6,
+                max_distance=max_distance,
+                init_x=self.init_x,
+                init_y=self.init_y,
+                init_yaw=self.init_yaw,
+                verbose=True
+            )
+            self.init_x = transformation[0,3]
+            self.init_y = transformation[1,3]
+            self.init_yaw, _, _ = Rotation.from_matrix(transformation[:3, :3]).as_euler('zyx')
+            if max_distance == 0.1: break
+
+
         # 对source_cloud_3d进行变换并发布
         source_transformed = transform_3d_points(self.source_cloud_3d, transformation)
         cloud_msg = create_point_cloud_msg(source_transformed, frame_id="camera_init")
         self.transformed_cloud_pub.publish(cloud_msg)
-        rospy.loginfo(f"Published transformed source cloud: {len(source_transformed)} points, error: {final_error:.6f}")
+        rospy.loginfo(f"Published transformed source cloud: {len(source_transformed)} points, Score: {score['score']}")
 
+    def icp_2d(self,
+        source: np.ndarray,
+        target: np.ndarray,
+        max_iterations: int = 100,
+        tolerance: float = 1e-6,
+        max_distance: float = 0.5,
+        init_x: float = 0.0,
+        init_y: float = 0.0,
+        init_yaw: float = 0.0,
+        verbose: bool = True
+    ) -> Tuple[np.ndarray, dict]:
+        # 构建初始变换
+        R_init = Rotation.from_euler('z', init_yaw).as_matrix()
+        t_init = np.array([init_x, init_y])
 
+        # 应用初始变换到源点云
+        current_source = (R_init[:2,:2] @ source.T).T + t_init
+
+        # 累积变换
+        R_total = R_init[:2,:2]
+        t_total = t_init.copy()
+
+        # 构建目标点云的KDTree
+        target_tree = KDTree(target)
+
+        prev_error = float('inf')
+
+        if verbose:
+            rospy.loginfo(f"Initial pose: x={init_x:.4f}, y={init_y:.4f}, yaw={np.degrees(init_yaw):.2f}°")
+            rospy.loginfo("Running 2D ICP...")
+
+        for iteration in range(max_iterations):
+            # 1. 找最近点对应
+            distances, indices = target_tree.query(current_source)
+
+            # 过滤距离过大的点
+            valid_mask = distances < max_distance
+            if np.sum(valid_mask) < 3:
+                if verbose:
+                    rospy.loginfo(f"Iter {iteration}: too few correspondences ({np.sum(valid_mask)}), stop")
+                break
+
+            source_matched = current_source[valid_mask]
+            target_matched = target[indices[valid_mask]]
+
+            # 2. 计算当前误差
+            error = np.sqrt(np.mean(distances[valid_mask] ** 2))
+
+            # 3. 检查收敛
+            if abs(prev_error - error) < tolerance:
+                if verbose:
+                    rospy.loginfo(f"Iter {iteration}: converged, error={error:.6f}")
+                break
+            prev_error = error
+
+            # 4. SVD计算最优变换
+            # 计算质心
+            centroid_s = np.mean(source_matched, axis=0)
+            centroid_t = np.mean(target_matched, axis=0)
+
+            # 去中心化
+            source_centered = source_matched - centroid_s
+            target_centered = target_matched - centroid_t
+
+            # 计算协方差矩阵
+            H = source_centered.T @ target_centered
+
+            # SVD分解
+            U, _, Vt = np.linalg.svd(H)
+            R_delta = Vt.T @ U.T
+
+            # 确保是纯旋转（行列式为1）
+            if np.linalg.det(R_delta) < 0:
+                Vt[1, :] *= -1
+                R_delta = Vt.T @ U.T
+
+            # 计算平移
+            t_delta = centroid_t - R_delta @ centroid_s
+
+            # 5. 更新变换
+            current_source = (R_delta @ current_source.T).T + t_delta
+
+            # 累积变换: T_new = T_delta * T_old
+            R_total = R_delta @ R_total
+            t_total = R_delta @ t_total + t_delta
+
+            if verbose and iteration % 10 == 0:
+                yaw_total = np.arctan2(R_total[1, 0], R_total[0, 0])
+                rospy.loginfo(f"Iter {iteration}: error={error:.6f}, yaw={np.degrees(yaw_total):.2f}°, "
+                            f"t=[{t_total[0]:.4f}, {t_total[1]:.4f}]")
+
+        # 构建4x4变换矩阵
+        transformation = np.eye(4)
+        transformation[:2, :2] = R_total
+        transformation[:2, 3] = t_total
+
+        # 计算评分指标 (参考Open3D)
+        distances, _ = target_tree.query(current_source)
+        inlier_mask = distances < self.max_distance
+        inlier_count = int(np.sum(inlier_mask))
+
+        # fitness: 内点占比
+        fitness = inlier_count / len(source)
+        # inlier_rmse: 仅计算内点的RMSE
+        inlier_rmse = np.sqrt(np.mean(distances[inlier_mask] ** 2)) if inlier_count > 0 else float('inf')
+
+        score = {
+            'fitness': fitness,
+            'inlier_rmse': inlier_rmse,
+            'inlier_count': inlier_count,
+            'score': fitness  # 综合评分使用fitness
+        }
+
+        if verbose:
+            yaw_final = np.arctan2(R_total[1, 0], R_total[0, 0])
+            rospy.loginfo(f"ICP completed: fitness={fitness:.4f}, inlier_rmse={inlier_rmse:.6f}")
+            rospy.loginfo(f"  Yaw: {np.degrees(yaw_final):.2f}°")
+            rospy.loginfo(f"  Translation: [{t_total[0]:.4f}, {t_total[1]:.4f}]")
+
+        return transformation, score
 if __name__ == "__main__":
     node = ICP2DRegistrationNode()
     rospy.spin()
