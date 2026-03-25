@@ -17,6 +17,36 @@ from scipy.spatial import KDTree
 from scipy.spatial.transform import Rotation
 
 
+def voxel_downsample_2d(
+    points: np.ndarray,
+    voxel_size: float
+) -> np.ndarray:
+    """
+    对2D点云进行体素下采样
+
+    Args:
+        points: 2D点云数组 (N, 2)
+        voxel_size: 体素大小
+
+    Returns:
+        下采样后的点云数组 (M, 2)
+    """
+    if len(points) == 0:
+        return points
+
+    # 计算每个点所属的体素索引
+    voxel_indices = np.floor(points / voxel_size).astype(np.int32)
+
+    # 使用字典存储每个体素中的一个点
+    voxel_dict = {}
+    for i, idx in enumerate(voxel_indices):
+        key = (idx[0], idx[1])
+        if key not in voxel_dict:
+            voxel_dict[key] = points[i]
+
+    return np.array(list(voxel_dict.values()))
+
+
 def extract_2d_slice(
     points_3d: np.ndarray,
     z_center: float = 1.5,
@@ -113,6 +143,7 @@ class ICP2DRegistrationNode:
         self.max_iterations = rospy.get_param('~max_iterations', 100)
         # self.tolerance = rospy.get_param('~tolerance', 1e-6)
         self.max_distance = rospy.get_param('~max_distance', 0.5)
+        self.voxel_size = rospy.get_param('~voxel_size', 0.1)
 
         # 滑窗参数
         self.window_size = rospy.get_param('~window_size', 10)
@@ -148,7 +179,7 @@ class ICP2DRegistrationNode:
         self.subscriber = rospy.Subscriber('cloud_registered', PointCloud2, self.cloud_callback, queue_size=1)
 
         # 发布变换后的点云
-        self.transformed_cloud_pub = rospy.Publisher('cloud_house', PointCloud2, queue_size=1)
+        self.transformed_cloud_pub = rospy.Publisher('/cloud_house', PointCloud2, queue_size=1)
 
         # rospy.loginfo(f"ICP 2D Registration Node initialized")
         # rospy.loginfo(f"z_center: {self.z_center}m, z_tolerance: {self.z_tolerance}m")
@@ -205,16 +236,21 @@ class ICP2DRegistrationNode:
         rospy.loginfo("Starting ICP registration...")
         for house_id in range(len(self.source_cloud_2d)):
             if self.finish_flag[house_id] == True: continue
+
+            # 体素下采样
+            source_down = voxel_downsample_2d(self.source_cloud_2d[house_id], self.voxel_size)
+            target_down = voxel_downsample_2d(target_cloud, self.voxel_size)
+
             for iter in range(3):
                 max_distance = max(self.max_distance / (iter + 1), 0.1)
                 # for house_id in range(len(self.source_cloud_2d)):
-                if iter == 0: 
+                if iter == 0:
                     init_x = self.init_x[house_id]
                     init_y = self.init_y[house_id]
                     init_yaw = self.init_yaw[house_id]
                 transformation, score = self.icp_2d(
-                    self.source_cloud_2d[house_id],
-                    target_cloud,
+                    source_down,
+                    target_down,
                     max_iterations=self.max_iterations,
                     tolerance=1e-6,
                     max_distance=max_distance,
@@ -237,7 +273,7 @@ class ICP2DRegistrationNode:
             transformation_error = np.linalg.inv(transformation)@transformation_init
             angle_error = np.linalg.norm(Rotation.from_matrix(transformation_error[:3,:3]).as_rotvec())
             t_error = np.linalg.norm(transformation_error[:2,3])
-            # print(self.house_id, score['score'], score['inlier_rmse'], score['inlier_count'], t_error, angle_error)
+            print(house_id, score['score'], score['inlier_rmse'], score['inlier_count'], t_error, angle_error)
             if (score['score']>0.3 or score['inlier_count']>500) and score['inlier_rmse'] < 0.2 and t_error < 1.5 and angle_error<np.deg2rad(15.0):
                 # transformation = np.eye(4)
                 # transformation[:3, :3] = Rotation.from_euler('z', self.init_yaw[self.house_id]).as_matrix()

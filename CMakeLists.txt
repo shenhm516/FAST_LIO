@@ -91,5 +91,6 @@ target_include_directories(fastlio_mapping PRIVATE ${PYTHON_INCLUDE_DIRS})
 # Install Python scripts
 catkin_install_python(PROGRAMS
   script/icp_2d_registration.py
+  script/init_pose_pub.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )

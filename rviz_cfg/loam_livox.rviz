@@ -552,7 +552,7 @@ Visualization Manager:
       Size (Pixels): 1
       Size (m): 0.009999999776482582
       Style: Points
-      Topic: /uav1/cloud_house
+      Topic: /cloud_house
       Unreliable: false
       Use Fixed Frame: true
       Use rainbow: true
@@ -585,7 +585,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz/Orbit
-      Distance: 20.477523803710938
+      Distance: 436.6806640625
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -601,9 +601,9 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.19979706406593323
+      Pitch: 0.7697969079017639
       Target Frame: global
-      Yaw: 3.0781826972961426
+      Yaw: 3.1081833839416504
     Saved: ~
 Window Geometry:
   Displays:

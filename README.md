@@ -1,3 +1,13 @@
+## Run in MARSIM
+
+```
+roslaunch fast_lio mapping_marsim1.launch
+```
+You can change the initial pose of each house PCD through ```init_x init_y init_yaw``` under the icp_2d_registration.py.
+The initial pose of each robot can be set through ```init_x init_y init_yaw``` under the init_pose_pub.py.
+
+Remark: Only the SE(2) initial pose is required. We estimate the roll and pitch angle through gravity alignment.
+
 ## Related Works and Extended Application
 
 **SLAM:**
